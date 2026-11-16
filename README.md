@@ -6,6 +6,30 @@ cached widget data. All Composio code and keys live here; the app only calls thi
 
 Express 5 · TypeScript · Zod · PostgreSQL · Claude (structured outputs) · Composio.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation, planned gaps,
+and scale-up decisions. The pasted reference architecture is treated as a target, not
+as a claim that every listed service is already installed.
+See [ARCHITECTURE-TARGET.md](ARCHITECTURE-TARGET.md) for the proposed end-state and
+implementation gates; it is a review document, not approval to begin those changes.
+
+## Widget contract artifacts
+
+The backend's strict Zod schema in `apps/api/src/spec/widget-spec.ts` is the canonical
+contract. It generates the JSON Schema checked in beside it and the app TypeScript /
+Android Kotlin compatibility artifacts. When both repositories are checked out as
+sibling folders under `Documents`, run:
+
+```bash
+cd apps/api
+npm run contract:generate
+npm run contract:check
+```
+
+For another app checkout location, pass `--app-root=/absolute/path/to/web2widgets`
+after the command. Backend tests run the artifact check; if the app checkout is
+available, this also verifies the checked-in TypeScript and Kotlin outputs. Never edit
+generated app artifacts by hand; change the backend schema/registries and regenerate.
+
 ## Run locally
 
 ```bash
@@ -19,6 +43,18 @@ npm test                         # 24 tests on PGlite (in-process Postgres), no 
 
 `ANTHROPIC_API_KEY` and `COMPOSIO_API_KEY` are optional: without them, generation and
 GitHub connect answer 503 with a clear message, and previews use sample data. Set
+`OPENAI_API_KEY` to enable optional original widget artwork; generated PNGs are stored
+as user-owned image assets and flow through the same preview/save/home-screen renderer
+path as uploaded images. With `OPENAI_API_KEY`, the default provider is the OpenAI Images
+API; without it, Playwright ChatGPT is selected. To use the Playwright browser provider,
+set `IMAGE_GENERATION_PROVIDER=playwright_chatgpt`,
+set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for the host, and run `npm run image:login`
+from `apps/api`. This opens ordinary Chrome (not automation-controlled) with a dedicated
+profile. Sign into ChatGPT and close that Chrome window, then restart the API. The API uses that profile only to submit image
+prompts and download results; credentials never enter API requests. The default shared
+browser limit is six images per hour (`PLAYWRIGHT_IMAGE_LIMIT_PER_HOUR`). Do not point
+it at your regular Chrome profile. Website thumbnails and user-uploaded images do not
+require either image provider.
 Web research uses the local SearXNG service; no paid search API key is needed. Start it
 with `docker compose up -d searxng` and set `SEARXNG_URL=http://127.0.0.1:8080` in the
 API environment (the default). If the API runs inside Docker Compose, use
@@ -55,10 +91,13 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
 ## Design notes
 
 - **WidgetSpec** (`src/spec/widget-spec.ts`) is the contract: a fixed component vocabulary
-  (column, row, text, image, link, clock, metric, list, streak chart, divider, spacer, button), data sources limited to known
-  GitHub queries, and bindings like `prs.count` / `prs.items[0].url`. Specs never contain code,
-  arbitrary URLs or credentials; `open_url` can only open a URL that came from connector data.
-- **Generation** (`src/modules/generation`) uses structured outputs. Structured outputs can't
+  (column, row, text, image, link, clock, metric, list, streak chart, divider, spacer, button), data sources for known
+  GitHub queries, public websites, and RSS/Atom news feeds, and bindings like `prs.count` / `prs.items[0].url`. Specs never contain code,
+  arbitrary URLs or credentials; `open_url` can only open a URL that came from connector data. A `lock_screen` button action is available
+  only when explicitly requested and requires the user to approve Android device-admin access before the app can lock the screen.
+- **Generation** (`src/modules/generation`) uses structured outputs. Follow-up edits give the
+  prompt fixer a compact summary of the current widget, so short edit requests can rely on its
+  existing source and displayed fields. Structured outputs can't
   express recursive schemas, so the model returns a flat node list (`src/spec/flat.ts`) that is
   rebuilt into a tree and validated; invalid output goes back with the exact issues, up to 3
   attempts. Every run is recorded in `generation_runs` (model, latency, tokens, outcome).
@@ -72,10 +111,12 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
   Composio project key plus `read:user` on its GitHub OAuth config.
 - **Widget data** is cache-first: the last good snapshot is kept, and a failed refresh records
   `lastError` instead of replacing good data.
+- **News feeds** (`src/modules/widget-data/news.ts`) discover a linked RSS/Atom feed from a publisher URL, normalize story fields and thumbnails, and fall back to linked page headlines. News/headline generation uses this live-story provider when the model otherwise selects a generic website snapshot.
 - **Auth** is anonymous per device for now; a sign-in provider can attach to the same user rows.
 
 ## Not built yet
 
-Background refresh jobs (the Android runtime refreshes best-effort), telemetry export, more
-connectors, and shared rate limits for multiple replicas (counters are in memory).
+Scheduled background refresh jobs, refresh-history records, telemetry export, more
+connectors, and shared rate limits for multiple replicas (counters are in memory). See
+[ARCHITECTURE.md](ARCHITECTURE.md) for priorities and the current storage/auth boundaries.
 # widget-composer-backend

@@ -29,9 +29,11 @@ export async function storeWidgetImage(db: Db, userId: string, mediaType: string
 
 /** Validates ownership when an asset-bearing spec is saved and makes it durable. */
 export async function retainSpecImages(db: Db, userId: string, spec: WidgetSpec): Promise<void> {
-  for (const id of imageAssetIds(spec.root)) {
+  const ids = imageAssetIds(spec.root);
+  if (spec.presentation.backgroundImageAssetId) ids.add(spec.presentation.backgroundImageAssetId);
+  for (const id of ids) {
     const result = await db.query(
-      "UPDATE widget_image_assets SET expires_at = NULL WHERE id = $1 AND user_id = $2 AND expires_at > now() RETURNING id",
+      "UPDATE widget_image_assets SET expires_at = NULL WHERE id = $1 AND user_id = $2 AND (expires_at IS NULL OR expires_at > now()) RETURNING id",
       [id, userId],
     );
     if (result.rows.length === 0) throw new HttpError(422, "IMAGE_ASSET_UNAVAILABLE", "An attached widget image expired or does not belong to this account. Attach it again.");
@@ -41,6 +43,9 @@ export async function retainSpecImages(db: Db, userId: string, spec: WidgetSpec)
 /** Resolves only unexpired or saved assets owned by the current account. */
 export async function loadSpecImages(db: Db, userId: string, spec: WidgetSpec): Promise<Record<string, SourceData>> {
   const ids = [...imageAssetIds(spec.root)];
+  if (spec.presentation.backgroundImageAssetId && !ids.includes(spec.presentation.backgroundImageAssetId)) {
+    ids.push(spec.presentation.backgroundImageAssetId);
+  }
   if (!ids.length) return {};
   const { rows } = await db.query<{ id: string; media_type: string; image_data: Buffer | Uint8Array }>(
     "SELECT id, media_type, image_data FROM widget_image_assets WHERE id = ANY($1::uuid[]) AND user_id = $2 AND (expires_at IS NULL OR expires_at > now())",

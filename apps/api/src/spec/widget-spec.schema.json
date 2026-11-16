@@ -1,0 +1,704 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "anyOf": [
+        {
+          "type": "number",
+          "const": 1
+        },
+        {
+          "type": "number",
+          "const": 2
+        },
+        {
+          "type": "number",
+          "const": 3
+        },
+        {
+          "type": "number",
+          "const": 4
+        },
+        {
+          "type": "number",
+          "const": 5
+        },
+        {
+          "type": "number",
+          "const": 6
+        },
+        {
+          "type": "number",
+          "const": 7
+        },
+        {
+          "type": "number",
+          "const": 8
+        },
+        {
+          "type": "number",
+          "const": 9
+        }
+      ]
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 40
+    },
+    "presentation": {
+      "type": "object",
+      "properties": {
+        "theme": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark",
+            "system"
+          ]
+        },
+        "fontFamily": {
+          "type": "string",
+          "enum": [
+            "sans",
+            "serif",
+            "monospace"
+          ]
+        },
+        "palette": {
+          "type": "object",
+          "properties": {
+            "background": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "surface": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "muted": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "accent": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "border": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          },
+          "required": [
+            "background",
+            "surface",
+            "text",
+            "muted",
+            "accent",
+            "border"
+          ],
+          "additionalProperties": false
+        },
+        "refreshMinutes": {
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 1440
+        },
+        "backgroundImageAssetId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        },
+        "minWidthDp": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 600
+        },
+        "minHeightDp": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 600
+        }
+      },
+      "required": [
+        "theme",
+        "refreshMinutes"
+      ],
+      "additionalProperties": false
+    },
+    "dataSources": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,23}$"
+              },
+              "connector": {
+                "type": "string",
+                "const": "github"
+              },
+              "query": {
+                "type": "string",
+                "enum": [
+                  "assigned_issues",
+                  "open_pull_requests",
+                  "review_requests",
+                  "contribution_streak"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "connector",
+              "query"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,23}$"
+              },
+              "connector": {
+                "type": "string",
+                "const": "website"
+              },
+              "query": {
+                "type": "string",
+                "const": "page"
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              }
+            },
+            "required": [
+              "id",
+              "connector",
+              "query",
+              "url"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]{0,23}$"
+              },
+              "connector": {
+                "type": "string",
+                "const": "news"
+              },
+              "query": {
+                "type": "string",
+                "enum": [
+                  "latest_items"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "maxLength": 2048,
+                "format": "uri"
+              }
+            },
+            "required": [
+              "id",
+              "connector",
+              "query",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "root": {
+      "$ref": "#/$defs/__schema0"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "presentation",
+    "dataSources",
+    "root"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "column",
+                "row"
+              ]
+            },
+            "gap": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "surface": {
+              "type": "boolean"
+            },
+            "radiusDp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "paddingDp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            },
+            "children": {
+              "minItems": 1,
+              "maxItems": 12,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "required": [
+            "type",
+            "children"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "style": {
+              "type": "string",
+              "enum": [
+                "title",
+                "body",
+                "caption"
+              ]
+            },
+            "fontSizeDp": {
+              "type": "integer",
+              "minimum": 10,
+              "maximum": 32
+            },
+            "weight": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "medium",
+                "bold"
+              ]
+            },
+            "colorToken": {
+              "type": "string",
+              "enum": [
+                "text",
+                "muted",
+                "accent"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "image"
+            },
+            "source": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "alt": {
+              "type": "string",
+              "maxLength": 120
+            },
+            "imagePrompt": {
+              "type": "string",
+              "maxLength": 600
+            },
+            "widthDp": {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 240
+            },
+            "heightDp": {
+              "type": "integer",
+              "minimum": 24,
+              "maximum": 240
+            },
+            "fit": {
+              "type": "string",
+              "enum": [
+                "cover",
+                "contain"
+              ]
+            },
+            "radiusDp": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 24
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "link"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "urlBinding": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "urlBinding"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "clock"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "12_hour",
+                "24_hour"
+              ]
+            },
+            "showDate": {
+              "type": "boolean"
+            },
+            "showSeconds": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "format"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "metric"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "valueBinding": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "valueBinding"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "progress"
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "valueBinding": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "maxValue": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "widthDp": {
+              "type": "integer",
+              "minimum": 50,
+              "maximum": 240
+            },
+            "heightDp": {
+              "type": "integer",
+              "minimum": 3,
+              "maximum": 16
+            }
+          },
+          "required": [
+            "type",
+            "valueBinding",
+            "maxValue"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "device_info"
+            },
+            "metric": {
+              "type": "string",
+              "enum": [
+                "battery_level",
+                "battery_status",
+                "battery_health",
+                "bluetooth_status",
+                "wifi_status",
+                "network_type",
+                "storage_free",
+                "storage_used_percent",
+                "power_saver",
+                "device_model",
+                "android_version"
+              ]
+            },
+            "label": {
+              "type": "string",
+              "maxLength": 40
+            },
+            "display": {
+              "type": "string",
+              "enum": [
+                "text",
+                "metric",
+                "progress"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "metric"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "list"
+            },
+            "source": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,23}$"
+            },
+            "maxItems": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            }
+          },
+          "required": [
+            "type",
+            "source",
+            "maxItems"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "streak_chart"
+            },
+            "source": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{0,23}$"
+            }
+          },
+          "required": [
+            "type",
+            "source"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "divider"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "spacer"
+            },
+            "sizeDp": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 64
+            }
+          },
+          "required": [
+            "type",
+            "sizeDp"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "button"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "action": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "open_url"
+                    },
+                    "urlBinding": {
+                      "type": "string",
+                      "maxLength": 80
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "urlBinding"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "open_app"
+                    },
+                    "screen": {
+                      "type": "string",
+                      "const": "widget_details"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "screen"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "refresh"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "lock_screen"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "action"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "title": "WidgetSpec",
+  "description": "Declarative, versioned WidgetComposer component tree."
+}

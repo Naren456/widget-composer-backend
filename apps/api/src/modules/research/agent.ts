@@ -29,6 +29,14 @@ export type ResearchSource = {
 
 /** Search only when the prompt signals that outside, current, or comparative facts are needed. */
 export function needsWebResearch(prompt: string): boolean {
+  const explicitResearch = /\b(?:research|search(?: the web| online)?|look\s+up|find\s+(?:more\s+)?(?:information|details|sources)|compare|comparison|fact[- ]check|sources)\b/i.test(prompt);
+  if (explicitResearch) return true;
+  // These requests have first-party sources and do not need SearXNG merely because
+  // the user asks for a recent value (for example, recent GitHub issues or battery %).
+  if (/\b(?:github|battery|bluetooth|wi-?fi|power saver|storage|device[- ]local|local clock)\b/i.test(prompt)) return false;
+  const hasSourceUrl = /https:\/\/[^\s<>"'`]+/i.test(prompt);
+  const sourceDrivenNewsWidget = hasSourceUrl && /\b(?:widget|headlines?|news\s+feed|articles?)\b/i.test(prompt);
+  if (sourceDrivenNewsWidget) return false;
   return /\b(?:research|search(?: the web| online)?|look\s+up|need\s+(?:more\s+)?(?:information|info|details)|find\s+(?:more\s+)?(?:information|details|sources)|latest|current|today|recent|news|compare|comparison|price|weather|reviews?|fact[- ]check|sources)\b/i.test(prompt);
 }
 

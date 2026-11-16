@@ -9,6 +9,7 @@ import { type Db } from "../src/db/db.js";
 import { migrate } from "../src/db/migrations.js";
 import { type ConnectedAccount, type ConnectorClient } from "../src/modules/connectors/composio.js";
 import { type LlmProvider, type LlmReply } from "../src/modules/generation/llm.js";
+import { type ImageGenerationProvider } from "../src/modules/image-generation/provider.js";
 
 process.env.NODE_ENV = "test";
 
@@ -115,13 +116,20 @@ export type TestServer = {
   close: () => Promise<void>;
 };
 
-export async function startServer(opts: { llm?: LlmProvider | null; connectors?: ConnectorClient | null; config?: Config } = {}): Promise<TestServer> {
+export async function startServer(opts: {
+  llm?: LlmProvider | null;
+  connectors?: ConnectorClient | null;
+  imageGenerationProvider?: ImageGenerationProvider | null;
+  config?: Config;
+} = {}): Promise<TestServer> {
   const db = await testDb();
   const config = opts.config ?? testConfig();
   const app = buildApp({
     db,
     config,
     llm: opts.llm ?? null,
+    imageGenerator: null,
+    imageGenerationProvider: opts.imageGenerationProvider ?? null,
     connectors: opts.connectors ?? null,
   });
   const server = app.listen(0);

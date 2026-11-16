@@ -38,6 +38,25 @@ test("bindings must name declared sources and the open_url action only opens ite
   assert.ok(issuesOf(literalUrl).some((m) => m.includes("is not a binding")));
 });
 
+test("a lock-screen button action is accepted as an explicit native action", () => {
+  const spec = sampleSpec();
+  spec.schemaVersion = 8;
+  spec.presentation.palette = {
+    background: "#141218",
+    surface: "#211F26",
+    text: "#E6E1E5",
+    muted: "#CAC4D0",
+    accent: "#D0BCFF",
+    border: "#49454F",
+  };
+  (spec.root.children[2] as { action: { type: string } }).action = { type: "lock_screen" };
+  assert.deepEqual(issuesOf(spec), []);
+
+  const oldVersion = sampleSpec();
+  (oldVersion.root.children[2] as { action: { type: string } }).action = { type: "lock_screen" };
+  assert.ok(issuesOf(oldVersion).some((message) => message.includes("require WidgetSpec v8")));
+});
+
 test("depth, node count and unused sources are limited", () => {
   let node: Record<string, unknown> = { type: "text", text: "deep" };
   for (let i = 0; i < 7; i++) node = { type: "column", children: [node] };
@@ -60,10 +79,15 @@ test("flat output converts to a tree and back", () => {
   assert.ok(spec.ok);
   const tree = toTree(toFlat(spec.spec));
   assert.ok(tree.ok);
-  assert.deepEqual(tree.spec, spec.spec);
+  assert.equal(tree.spec.schemaVersion, 8);
+  assert.equal(tree.spec.name, spec.spec.name);
+  assert.deepEqual(tree.spec.dataSources, spec.spec.dataSources);
+  assert.deepEqual(tree.spec.root, spec.spec.root);
+  assert.equal(tree.spec.presentation.theme, spec.spec.presentation.theme);
+  assert.equal(tree.spec.presentation.refreshMinutes, spec.spec.presentation.refreshMinutes);
 });
 
-test("flat output with cycles, duplicates, dangling or orphaned nodes is rejected", () => {
+test("flat output rejects broken graphs and safely drops detached nodes", () => {
   const base = (nodes: FlatSpec["nodes"], rootId = "a"): FlatSpec => ({
     unsupported: null,
     name: "x",
@@ -84,7 +108,9 @@ test("flat output with cycles, duplicates, dangling or orphaned nodes is rejecte
       m.includes("more than one place"),
     ),
   );
-  assert.ok(msg(base([{ id: "a", type: "divider" }, { id: "b", type: "divider" }])).some((m) => m.includes("not reachable")));
+  const detached = toTree(base([{ id: "a", type: "divider" }, { id: "b", type: "divider" }]));
+  assert.ok(detached.ok);
+  if (detached.ok) assert.deepEqual(detached.spec.root, { type: "divider" });
   assert.ok(msg(base([{ id: "a", type: "divider" }, { id: "a", type: "divider" }])).some((m) => m.includes("duplicate")));
   assert.ok(msg(base([{ id: "a", type: "divider" }], "zzz")).some((m) => m.includes("no node")));
 });

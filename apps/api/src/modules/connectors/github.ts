@@ -19,6 +19,9 @@ export type DataItem = {
   imageUrl?: string;
   imageData?: string;
   imageMimeType?: string;
+  summary?: string;
+  publishedAt?: string;
+  sourceName?: string;
 };
 export type StructuredWebsiteData = {
   type: string;

@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 
 import { type Deps } from "./deps.js";
 import { errorHandler } from "./lib/errors.js";
+import { devLog } from "./lib/logger.js";
 import { routes } from "./routes.js";
 
 export type { Deps };
@@ -23,6 +24,7 @@ export function buildApp(deps: Deps) {
   app.use(cors(deps.config.CORS_ORIGINS));
   // Only widget generation accepts a reference image; keep other JSON endpoints small.
   app.use("/v1/widgets/generate", express.json({ limit: "5mb" }));
+  app.use("/v1/image-generation/generate", express.json({ limit: "5mb" }));
   app.use(express.json({ limit: "64kb" }));
 
   app.use(routes(deps));
@@ -57,10 +59,12 @@ function cors(origins: string[]) {
 /** One console line per request: method, path, status, duration, and the error code on failures. */
 function requestLog(req: Request, res: Response, next: NextFunction) {
   const start = performance.now();
+  devLog("http", "request started", { method: req.method, path: req.path });
   res.on("finish", () => {
     const ms = Math.round(performance.now() - start);
     const code = res.locals.errorCode ? ` ${res.locals.errorCode}: ${res.locals.errorMessage}` : "";
     const line = `${new Date().toISOString()} ${req.method} ${req.path} ${res.statusCode} ${ms}ms${code}`;
+    devLog("http", "request completed", { method: req.method, path: req.path, status: res.statusCode, durationMs: ms, errorCode: res.locals.errorCode });
     if (res.statusCode >= 500) console.error(line);
     else if (res.statusCode >= 400) console.warn(line);
     else console.log(line);

@@ -11,6 +11,9 @@ import { reviewWidgetDesign } from "./modules/generation/design-review.js";
 import { LlmUnavailableError } from "./modules/generation/llm.js";
 import { previewData, widgetData } from "./modules/widget-data/service.js";
 import { retainSpecImages, storeWidgetImage } from "./modules/widget-data/assets.js";
+import { deleteImageAsset, getImageAsset, listImageAssets } from "./modules/image-generation/assets.js";
+import { generateAndStoreImage } from "./modules/image-generation/service.js";
+import { imageGenerationRequestSchema } from "./modules/image-generation/schema.js";
 import {
   addVersion,
   createWidget,
@@ -19,12 +22,21 @@ import {
   listVersions,
   listWidgets,
   publish,
+  removeInstanceByPlatform,
   registerInstance,
   removeInstance,
   updateWidget,
 } from "./modules/widgets/service.js";
-import { RENDERERS, type RendererId, validateSpec, type WidgetSpec } from "./spec/widget-spec.js";
+import {
+  RENDERERS,
+  SCHEMA_VERSION,
+  SUPPORTED_SCHEMA_VERSIONS,
+  type RendererId,
+  validateSpec,
+  type WidgetSpec,
+} from "./spec/widget-spec.js";
 import { COMPONENT_CATALOG, WIDGET_ACTIONS, WIDGET_FONT_FAMILIES, WIDGET_SIZES, WIDGET_THEMES } from "./spec/component-catalog.js";
+import { DATA_PROVIDER_CATALOG } from "./spec/provider-catalog.js";
 
 const uuid = z.uuid();
 /** Path ids that are not UUIDs are reported as not found, like ids of other users. */
@@ -40,7 +52,7 @@ function specFrom(input: unknown, renderer: RendererId = "android-remoteviews-v1
   return checked.spec;
 }
 
-const prompt = z.string().trim().min(5).max(500);
+const prompt = z.string().trim().min(5).max(4_000);
 const rendererId = z.enum(Object.keys(RENDERERS) as [RendererId, ...RendererId[]]);
 const referenceImage = z.object({
   mediaType: z.enum(["image/jpeg", "image/png", "image/webp"]),
@@ -101,7 +113,16 @@ export function routes(deps: Deps): Router {
 
   // --- Generation and validation ---------------------------------------------
   router.get("/v1/widgets/components", (_req, res) => {
-    res.json({ components: COMPONENT_CATALOG, sizes: WIDGET_SIZES, themes: WIDGET_THEMES, fontFamilies: WIDGET_FONT_FAMILIES, actions: WIDGET_ACTIONS });
+    res.json({
+      schemaVersion: SCHEMA_VERSION,
+      supportedSchemaVersions: SUPPORTED_SCHEMA_VERSIONS,
+      components: COMPONENT_CATALOG,
+      providers: DATA_PROVIDER_CATALOG,
+      sizes: WIDGET_SIZES,
+      themes: WIDGET_THEMES,
+      fontFamilies: WIDGET_FONT_FAMILIES,
+      actions: WIDGET_ACTIONS,
+    });
   });
 
   router.post("/v1/widgets/generate", byUser("generation", 10), async (req, res) => {
@@ -121,6 +142,7 @@ export function routes(deps: Deps): Router {
       searchBaseUrl: config.SEARXNG_URL,
       image: body.image,
       imageAssetId,
+      imageGenerator: deps.imageGenerator,
     });
     res.json({ spec, generationRunId: runId });
   });
@@ -143,6 +165,46 @@ export function routes(deps: Deps): Router {
       }
       throw new HttpError(502, "DESIGN_REVIEW_FAILED", "The AI design review could not be completed. Please try again.");
     }
+  });
+
+  router.post("/v1/image-generation/generate", byUser("image-generation", 3), async (req, res) => {
+    if (!deps.imageGenerationProvider) {
+      throw new HttpError(503, "IMAGE_GENERATION_UNAVAILABLE", "Image generation is not configured on the server.");
+    }
+    const body = parse(imageGenerationRequestSchema, req.body, "Enter a prompt and choose an image style and aspect ratio.");
+    if (body.referenceImage) {
+      const bytes = Buffer.from(body.referenceImage.base64, "base64");
+      const validSignature = body.referenceImage.mediaType === "image/jpeg"
+        ? bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+        : body.referenceImage.mediaType === "image/png"
+          ? bytes.length > 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+          : bytes.length > 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP";
+      if (!validSignature || bytes.length > 3_000_000) {
+        throw new HttpError(422, "INVALID_REFERENCE_IMAGE", "Choose a valid JPEG, PNG, or WebP image smaller than 3 MB.");
+      }
+    }
+    const asset = await generateAndStoreImage(db, deps.imageGenerationProvider, currentUser(res), body);
+    const stored = await getImageAsset(db, currentUser(res), asset.id);
+    res.status(201).json({
+      asset,
+      imageUrl: imageAssetUrl(asset.id),
+      imageData: stored.imageData,
+    });
+  });
+
+  router.get("/v1/image-assets", async (_req, res) => {
+    const assets = await listImageAssets(db, currentUser(res));
+    res.json({ assets: assets.map((asset) => ({ ...asset, imageUrl: imageAssetUrl(asset.id) })) });
+  });
+
+  router.get("/v1/image-assets/:id", async (req, res) => {
+    const asset = await getImageAsset(db, currentUser(res), id(req.params.id, "Image asset"));
+    res.json({ ...asset, imageUrl: imageAssetUrl(asset.asset.id) });
+  });
+
+  router.delete("/v1/image-assets/:id", async (req, res) => {
+    await deleteImageAsset(db, currentUser(res), id(req.params.id, "Image asset"));
+    res.status(204).end();
   });
 
   router.post("/v1/widgets/preview-data", async (req, res) => {
@@ -225,6 +287,18 @@ export function routes(deps: Deps): Router {
     res.status(201).json(await registerInstance(db, currentUser(res), id(req.params.id, "Widget"), body));
   });
 
+  router.delete("/v1/widgets/:id/instances", async (req, res) => {
+    const body = parse(
+      z.object({
+        deviceId: z.string().regex(/^[\w-]{8,64}$/),
+        platformWidgetId: z.number().int().min(0).max(2_147_483_647),
+      }).strict(),
+      req.body,
+    );
+    await removeInstanceByPlatform(db, currentUser(res), id(req.params.id, "Widget"), body);
+    res.status(204).end();
+  });
+
   router.delete("/v1/widgets/:id/instances/:instanceId", async (req, res) => {
     await removeInstance(db, currentUser(res), id(req.params.id, "Widget"), id(req.params.instanceId, "Instance"));
     res.status(204).end();
@@ -243,6 +317,10 @@ export function routes(deps: Deps): Router {
     await disconnect(requireClient(deps.connectors), currentUser(res), req.params.id);
     res.status(204).end();
   });
+
+  function imageAssetUrl(assetId: string): string {
+    return new URL(`/v1/image-assets/${assetId}`, config.PUBLIC_API_URL).toString();
+  }
 
   return router;
 }

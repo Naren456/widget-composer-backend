@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { isIP } from "node:net";
 import { COMPONENT_CATALOG, WIDGET_FONT_FAMILIES, WIDGET_THEMES, type WidgetPalette } from "./component-catalog.js";
+import { CONNECTORS, DEVICE_METRICS, GITHUB_QUERIES, NEWS_QUERIES, WEBSITE_QUERIES } from "./provider-catalog.js";
+export { CONNECTORS, DEVICE_METRICS, GITHUB_QUERIES, NEWS_QUERIES, WEBSITE_QUERIES } from "./provider-catalog.js";
 
 /**
  * WidgetSpec — the contract between generation, validation, storage, preview and
@@ -11,7 +13,8 @@ import { COMPONENT_CATALOG, WIDGET_FONT_FAMILIES, WIDGET_THEMES, type WidgetPale
  * Change the shape only by adding a new schemaVersion; stored versions are immutable.
  */
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 9;
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 export const LIMITS = {
   maxDepth: 6,
@@ -26,11 +29,8 @@ export const LIMITS = {
   maxSpecBytes: 16_000,
 } as const;
 
-export const CONNECTORS = ["github", "website"] as const;
-export const GITHUB_QUERIES = ["assigned_issues", "open_pull_requests", "review_requests", "contribution_streak"] as const;
-export const WEBSITE_QUERIES = ["page"] as const;
 /** Fields every normalized item carries; see `connectors/github.ts`. */
-export const ITEM_FIELDS = ["title", "url", "repo", "number", "author", "updatedAt", "imageUrl"] as const;
+export const ITEM_FIELDS = ["title", "url", "repo", "number", "author", "updatedAt", "imageUrl", "summary", "publishedAt", "sourceName"] as const;
 
 export type GitHubDataSource = {
   id: string;
@@ -38,26 +38,30 @@ export type GitHubDataSource = {
   query: (typeof GITHUB_QUERIES)[number];
 };
 export type WebsiteDataSource = { id: string; connector: "website"; query: "page"; url: string };
-export type DataSource = GitHubDataSource | WebsiteDataSource;
+export type NewsDataSource = { id: string; connector: "news"; query: (typeof NEWS_QUERIES)[number]; url: string };
+export type DataSource = GitHubDataSource | WebsiteDataSource | NewsDataSource;
 
 export type AllowedAction =
   /** Opens a URL that came from connector data, never one written into the spec. */
   | { type: "open_url"; urlBinding: string }
   | { type: "open_app"; screen: "widget_details" }
-  | { type: "refresh" };
+  | { type: "refresh" }
+  | { type: "lock_screen" };
 
 export type WidgetNode =
   | { type: "column" | "row"; gap?: number; surface?: boolean; radiusDp?: number; paddingDp?: number; children: WidgetNode[] }
   /** Text may contain {{binding}} placeholders, e.g. "{{prs.count}} open". */
   | { type: "text"; text: string; style?: "title" | "body" | "caption"; fontSizeDp?: number; weight?: "normal" | "medium" | "bold"; colorToken?: "text" | "muted" | "accent" }
   /** An image supplied by a website data source, never an arbitrary spec URL. */
-  | { type: "image"; source: string; alt?: string; widthDp?: number; heightDp?: number; fit?: "cover" | "contain"; radiusDp?: number }
+  | { type: "image"; source: string; alt?: string; imagePrompt?: string; widthDp?: number; heightDp?: number; fit?: "cover" | "contain"; radiusDp?: number }
   /** A short label that opens a URL supplied by connector data. */
   | { type: "link"; label: string; urlBinding: string }
   /** Native TextClock; uses the device's current local time and updates independently. */
   | { type: "clock"; format: "12_hour" | "24_hour"; showDate?: boolean; showSeconds?: boolean }
   | { type: "metric"; label: string; valueBinding: string }
   | { type: "progress"; label?: string; valueBinding: string; maxValue: number; widthDp?: number; heightDp?: number }
+  /** Read-only information from the Android device that hosts the widget. */
+  | { type: "device_info"; metric: (typeof DEVICE_METRICS)[number]; label?: string; display?: "text" | "metric" | "progress" }
   /** The first `maxItems` items of a data source, each drawn as title + repo#number. */
   | { type: "list"; source: string; maxItems: number }
   /** GitHub contribution heatmap plus current and longest streak summary. */
@@ -67,7 +71,7 @@ export type WidgetNode =
   | { type: "button"; label: string; action: AllowedAction };
 
 export type WidgetSpec = {
-  schemaVersion: 1 | 2 | 3 | 4 | 5 | 6;
+  schemaVersion: (typeof SUPPORTED_SCHEMA_VERSIONS)[number];
   name: string;
   presentation: {
     theme: "light" | "dark" | "system";
@@ -76,6 +80,7 @@ export type WidgetSpec = {
     palette?: WidgetPalette;
     /** A preference: Android decides when background refresh actually runs. */
     refreshMinutes: number;
+    backgroundImageAssetId?: string;
     minWidthDp?: number;
     minHeightDp?: number;
   };
@@ -87,12 +92,13 @@ const sourceId = z.string().regex(/^[a-z][a-z0-9_]{0,23}$/, "lowercase letters, 
 const dp = z.number().int().min(0).max(64);
 const imageDp = z.number().int().min(24).max(240);
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a six digit hex color, such as #AABBCC");
-const paletteSchema = z.object({ background: color, surface: color, text: color, muted: color, accent: color, border: color }).strict();
+export const widgetPaletteSchema = z.object({ background: color, surface: color, text: color, muted: color, accent: color, border: color }).strict();
 
-const action: z.ZodType<AllowedAction> = z.discriminatedUnion("type", [
+export const widgetActionSchema: z.ZodType<AllowedAction> = z.discriminatedUnion("type", [
   z.object({ type: z.literal("open_url"), urlBinding: z.string().max(80) }).strict(),
   z.object({ type: z.literal("open_app"), screen: z.literal("widget_details") }).strict(),
   z.object({ type: z.literal("refresh") }).strict(),
+  z.object({ type: z.literal("lock_screen") }).strict(),
 ]);
 
 export const nodeSchema: z.ZodType<WidgetNode> = z.lazy(() =>
@@ -109,7 +115,7 @@ export const nodeSchema: z.ZodType<WidgetNode> = z.lazy(() =>
       })
       .strict(),
     z.object({
-      type: z.literal("image"), source: z.string().max(80), alt: z.string().max(120).optional(),
+      type: z.literal("image"), source: z.string().max(80), alt: z.string().max(120).optional(), imagePrompt: z.string().max(600).optional(),
       widthDp: imageDp.optional(), heightDp: imageDp.optional(), fit: z.enum(["cover", "contain"]).optional(), radiusDp: z.number().int().min(0).max(24).optional(),
     }).strict(),
     z.object({ type: z.literal("link"), label: z.string().min(1).max(LIMITS.maxLabelLength), urlBinding: z.string().max(80) }).strict(),
@@ -123,24 +129,29 @@ export const nodeSchema: z.ZodType<WidgetNode> = z.lazy(() =>
       .object({ type: z.literal("metric"), label: z.string().min(1).max(LIMITS.maxLabelLength), valueBinding: z.string().max(80) })
       .strict(),
     z.object({ type: z.literal("progress"), label: z.string().max(LIMITS.maxLabelLength).optional(), valueBinding: z.string().max(80), maxValue: z.number().int().min(1).max(1_000_000), widthDp: z.number().int().min(50).max(240).optional(), heightDp: z.number().int().min(3).max(16).optional() }).strict(),
+    z.object({ type: z.literal("device_info"), metric: z.enum(DEVICE_METRICS), label: z.string().max(LIMITS.maxLabelLength).optional(), display: z.enum(["text", "metric", "progress"]).optional() }).strict(),
     z.object({ type: z.literal("list"), source: sourceId, maxItems: z.number().int().min(1).max(LIMITS.maxListItems) }).strict(),
     z.object({ type: z.literal("streak_chart"), source: sourceId }).strict(),
     z.object({ type: z.literal("divider") }).strict(),
     z.object({ type: z.literal("spacer"), sizeDp: z.number().int().min(1).max(64) }).strict(),
-    z.object({ type: z.literal("button"), label: z.string().min(1).max(LIMITS.maxLabelLength), action }).strict(),
+    z.object({ type: z.literal("button"), label: z.string().min(1).max(LIMITS.maxLabelLength), action: widgetActionSchema }).strict(),
   ]),
 );
 
 export const specSchema: z.ZodType<WidgetSpec> = z
   .object({
-    schemaVersion: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5), z.literal(SCHEMA_VERSION)]),
+    schemaVersion: z.union([
+      z.literal(1), z.literal(2), z.literal(3), z.literal(4),
+      z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(SCHEMA_VERSION),
+    ]),
     name: z.string().trim().min(1).max(LIMITS.maxNameLength),
     presentation: z
       .object({
         theme: z.enum(WIDGET_THEMES),
         fontFamily: z.enum(WIDGET_FONT_FAMILIES).optional(),
-        palette: paletteSchema.optional(),
+        palette: widgetPaletteSchema.optional(),
         refreshMinutes: z.number().int().min(15).max(1440),
+        backgroundImageAssetId: z.uuid().optional(),
         minWidthDp: z.number().int().min(40).max(600).optional(),
         minHeightDp: z.number().int().min(40).max(600).optional(),
       })
@@ -148,6 +159,7 @@ export const specSchema: z.ZodType<WidgetSpec> = z
     dataSources: z.array(z.discriminatedUnion("connector", [
       z.object({ id: sourceId, connector: z.literal("github"), query: z.enum(GITHUB_QUERIES) }).strict(),
       z.object({ id: sourceId, connector: z.literal("website"), query: z.literal("page"), url: z.string().url().max(2048) }).strict(),
+      z.object({ id: sourceId, connector: z.literal("news"), query: z.enum(NEWS_QUERIES), url: z.string().url().max(2048) }).strict(),
     ])).max(LIMITS.maxDataSources),
     root: nodeSchema,
   })
@@ -166,6 +178,30 @@ export const specSchema: z.ZodType<WidgetSpec> = z
     }
     if (spec.schemaVersion < 6 && spec.presentation.palette) {
       ctx.addIssue({ code: "custom", path: ["presentation", "palette"], message: "palette tokens require WidgetSpec v6" });
+    }
+    const usesV6DesignTools = (node: WidgetNode): boolean => {
+      if (node.type === "column" || node.type === "row") return Boolean(node.surface || node.radiusDp !== undefined || node.paddingDp !== undefined) || node.children.some(usesV6DesignTools);
+      if (node.type === "text") return node.fontSizeDp !== undefined || node.weight !== undefined || node.colorToken !== undefined;
+      if (node.type === "image") return node.widthDp !== undefined || node.heightDp !== undefined || node.fit !== undefined || node.radiusDp !== undefined || node.source.startsWith("asset_");
+      return node.type === "progress" || node.type === "device_info";
+    };
+    if (spec.schemaVersion < 6 && usesV6DesignTools(spec.root)) {
+      ctx.addIssue({ code: "custom", path: ["root"], message: "palette and design-tool properties require WidgetSpec v6" });
+    }
+    const usesV7ImagePrompt = (node: WidgetNode): boolean => node.type === "image"
+      ? node.imagePrompt !== undefined
+      : (node.type === "column" || node.type === "row") && node.children.some(usesV7ImagePrompt);
+    if (spec.schemaVersion < 7 && usesV7ImagePrompt(spec.root)) {
+      ctx.addIssue({ code: "custom", path: ["root"], message: "imagePrompt requires WidgetSpec v7" });
+    }
+    const usesV8LockAction = (node: WidgetNode): boolean => node.type === "button"
+      ? node.action.type === "lock_screen"
+      : (node.type === "column" || node.type === "row") && node.children.some(usesV8LockAction);
+    if (spec.schemaVersion < 8 && usesV8LockAction(spec.root)) {
+      ctx.addIssue({ code: "custom", path: ["root"], message: "lock_screen actions require WidgetSpec v8" });
+    }
+    if (spec.schemaVersion < 9 && spec.presentation.backgroundImageAssetId !== undefined) {
+      ctx.addIssue({ code: "custom", path: ["presentation", "backgroundImageAssetId"], message: "widget background images require WidgetSpec v9" });
     }
     if (spec.presentation.palette) {
       const palette = spec.presentation.palette;
@@ -197,7 +233,7 @@ export const specSchema: z.ZodType<WidgetSpec> = z
   });
 
 /** `<source>.count` or `<source>.items[<i>].<field>`. */
-const BINDING = /^([a-z][a-z0-9_]{0,23})\.(?:count|items\[(\d{1,2})\]\.(title|url|repo|number|author|updatedAt|imageUrl))$/;
+const BINDING = /^([a-z][a-z0-9_]{0,23})\.(?:count|items\[(\d{1,2})\]\.(title|url|repo|number|author|updatedAt|imageUrl|summary|publishedAt|sourceName))$/;
 const PLACEHOLDER = /\{\{\s*([^{}]*?)\s*\}\}/g;
 
 export type Binding = { source: string; kind: "count" } | { source: string; kind: "item"; index: number; field: string };
@@ -222,7 +258,7 @@ export function checkSpec(spec: WidgetSpec, supportedNodes: ReadonlySet<string> 
   spec.dataSources.forEach((ds, i) => {
     if (sources.has(ds.id)) issues.push({ path: `dataSources[${i}].id`, message: `duplicate id "${ds.id}"` });
     sources.add(ds.id);
-    if (ds.connector === "website") {
+    if (ds.connector === "website" || ds.connector === "news") {
       const url = new URL(ds.url);
       const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
       const ipVersion = isIP(hostname);
@@ -235,13 +271,13 @@ export function checkSpec(spec: WidgetSpec, supportedNodes: ReadonlySet<string> 
         : ipVersion === 6 && (hostname === "::" || hostname === "::1" || /^(fc|fd|fe[89ab]|ff|::ffff:)/i.test(hostname));
       const localHost = hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local");
       if (url.protocol !== "https:" || url.username || url.password || url.port || localHost || privateIp) {
-        issues.push({ path: `dataSources[${i}].url`, message: "website sources must use public HTTPS URLs without credentials or custom ports" });
+        issues.push({ path: `dataSources[${i}].url`, message: "public web sources must use HTTPS URLs without credentials or custom ports" });
       }
     }
   });
 
   const used = new Set<string>();
-  const checkBinding = (raw: string, path: string, opts: { urlOnly?: boolean; imageOnly?: boolean } = {}) => {
+  const checkBinding = (raw: string, path: string, opts: { urlOnly?: boolean; imageOnly?: boolean; numericOnly?: boolean } = {}) => {
     const b = parseBinding(raw);
     if (!b) {
       issues.push({ path, message: `"${raw}" is not a binding; use <source>.count or <source>.items[0].<${ITEM_FIELDS.join("|")}>` });
@@ -255,11 +291,14 @@ export function checkSpec(spec: WidgetSpec, supportedNodes: ReadonlySet<string> 
     if (opts.urlOnly && !(b.kind === "item" && b.field === "url")) {
       issues.push({ path, message: "open_url may only open <source>.items[i].url" });
     }
+    if (opts.numericOnly && !(b.kind === "count" || (b.kind === "item" && b.field === "number"))) {
+      issues.push({ path, message: "progress values must bind to <source>.count or <source>.items[i].number" });
+    }
     if (opts.imageOnly) {
       if (!(b.kind === "item" && b.field === "imageUrl")) {
         issues.push({ path, message: "image source must bind to <source>.items[i].imageUrl" });
-      } else if (!spec.dataSources.some((source) => source.id === b.source && source.connector === "website")) {
-        issues.push({ path, message: "images are only available from website data sources" });
+      } else if (!spec.dataSources.some((source) => source.id === b.source && (source.connector === "website" || source.connector === "news"))) {
+        issues.push({ path, message: "images are only available from website or news data sources" });
       }
     }
   };
@@ -294,7 +333,12 @@ export function checkSpec(spec: WidgetSpec, supportedNodes: ReadonlySet<string> 
         checkBinding(node.valueBinding, `${path}.valueBinding`);
         break;
       case "progress":
-        checkBinding(node.valueBinding, `${path}.valueBinding`);
+        checkBinding(node.valueBinding, `${path}.valueBinding`, { numericOnly: true });
+        break;
+      case "device_info":
+        if (node.display === "progress" && !["battery_level", "storage_used_percent"].includes(node.metric)) {
+          issues.push({ path, message: "progress display is available only for battery_level or storage_used_percent" });
+        }
         break;
       case "list":
         if (!sources.has(node.source)) issues.push({ path: `${path}.source`, message: `undeclared data source "${node.source}"` });
@@ -333,6 +377,7 @@ export const ALL_NODES: ReadonlySet<string> = new Set(COMPONENT_CATALOG.map((com
  * here instead of failing on a phone.
  */
 export const RENDERERS = {
+  "android-glance-v1": ALL_NODES,
   "android-remoteviews-v1": ALL_NODES,
 } as const satisfies Record<string, ReadonlySet<string>>;
 

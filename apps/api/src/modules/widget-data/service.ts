@@ -3,8 +3,9 @@ import { HttpError, notFound } from "../../lib/errors.js";
 import { parseBinding, type WidgetNode, type WidgetSpec } from "../../spec/widget-spec.js";
 import { type ConnectorClient, ToolError } from "../connectors/composio.js";
 import { GITHUB_TOOLKIT, runQuery, sampleData, type SourceData } from "../connectors/github.js";
-import { requireClient } from "../connectors/service.js";
+import { connectorHttpError, requireClient } from "../connectors/service.js";
 import { fetchWebsitePage } from "./website.js";
+import { fetchNewsFeed } from "./news.js";
 import { loadSpecImages } from "./assets.js";
 
 /**
@@ -47,7 +48,13 @@ async function fetchAll(deps: Deps, userId: string, spec: WidgetSpec): Promise<R
   const githubSources = spec.dataSources.filter((source) => source.connector === "github");
   const client = githubSources.length > 0 ? requireClient(deps.connectors) : null;
   if (client) {
-    const accounts = await client.accounts(userId, GITHUB_TOOLKIT);
+    let accounts: Awaited<ReturnType<ConnectorClient["accounts"]>>;
+    try { accounts = await client.accounts(userId, GITHUB_TOOLKIT); }
+    catch (error) {
+      const mapped = connectorHttpError(error);
+      if (mapped) throw mapped;
+      throw error;
+    }
     if (accounts.length === 0) throw new HttpError(409, "CONNECTOR_REQUIRED", "Connect GitHub to load this widget's data.");
     if (!accounts.some((a) => a.status === "active")) {
       throw new HttpError(409, "CONNECTOR_NEEDS_REAUTH", "Reconnect GitHub to keep this widget updated.");
@@ -60,15 +67,17 @@ async function fetchAll(deps: Deps, userId: string, spec: WidgetSpec): Promise<R
         ? await runQuery(client, userId, ds.query)
         : ds.connector === "website"
           ? await fetchWebsitePage(ds.url, { imageIndexes: [...(imageIndexesBySource.get(ds.id) ?? [])] })
+          : ds.connector === "news"
+            ? await fetchNewsFeed(ds.url, { imageIndexes: [...(imageIndexesBySource.get(ds.id) ?? [])] })
           : { count: 0, items: [] },
     ] as const));
     return { ...Object.fromEntries(entries), ...await loadSpecImages(deps.db, userId, spec) };
   } catch (error) {
     if (!(error instanceof ToolError)) throw error;
-    console.warn(`[widget-data] user ${userId}: ${error.message}`);
-    if (error.kind === "unauthorized") throw new HttpError(409, "CONNECTOR_NEEDS_REAUTH", "GitHub access was revoked. Reconnect GitHub.");
-    if (error.kind === "rate_limited") throw new HttpError(429, "UPSTREAM_RATE_LIMITED", "GitHub rate limit reached.");
-    throw new HttpError(502, "UPSTREAM_ERROR", error.message);
+    console.warn(`[widget-data] user ${userId}: ${error.kind}`);
+    const mapped = connectorHttpError(error);
+    if (mapped) throw mapped;
+    throw error;
   }
 }
 
@@ -83,13 +92,29 @@ export async function previewData(
 ): Promise<{ data: Record<string, SourceData>; sample: boolean }> {
   const imageIndexesBySource = imageSources(spec.root);
   const githubSources = spec.dataSources.filter((source) => source.connector === "github");
-  const accounts = deps.connectors && githubSources.length > 0 ? await deps.connectors.accounts(userId, GITHUB_TOOLKIT) : [];
+  let accounts = [] as Awaited<ReturnType<NonNullable<Deps["connectors"]>["accounts"]>>;
+  if (deps.connectors && githubSources.length > 0) {
+    try { accounts = await deps.connectors.accounts(userId, GITHUB_TOOLKIT); }
+    catch (error) {
+      if (error instanceof ToolError && error.kind === "misconfigured") {
+        console.warn("[widget-data] Composio API key was rejected; previewing sample GitHub data.");
+      } else {
+        const mapped = connectorHttpError(error);
+        if (mapped) throw mapped;
+        throw error;
+      }
+    }
+  }
   const hasGithub = githubSources.length > 0;
   const isGithubConnected = accounts.some((a) => a.status === "active");
   if (hasGithub && !isGithubConnected) {
     const entries = await Promise.all(spec.dataSources.map(async (ds) => [
       ds.id,
-      ds.connector === "website" ? await fetchWebsitePage(ds.url, { imageIndexes: [...(imageIndexesBySource.get(ds.id) ?? [])] }) : sampleData(ds.query),
+      ds.connector === "website"
+        ? await fetchWebsitePage(ds.url, { imageIndexes: [...(imageIndexesBySource.get(ds.id) ?? [])] })
+        : ds.connector === "news"
+          ? await fetchNewsFeed(ds.url, { imageIndexes: [...(imageIndexesBySource.get(ds.id) ?? [])] })
+          : sampleData(ds.query),
     ] as const));
     return { data: { ...Object.fromEntries(entries), ...await loadSpecImages(deps.db, userId, spec) }, sample: true };
   }

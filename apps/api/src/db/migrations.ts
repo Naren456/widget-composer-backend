@@ -141,6 +141,17 @@ const migrations: { id: string; sql: string }[] = [
       CREATE INDEX widget_image_assets_expiry ON widget_image_assets(expires_at);
     `,
   },
+  {
+    id: "004_generated_image_assets",
+    sql: `
+      ALTER TABLE widget_image_assets
+        ADD COLUMN prompt text NOT NULL DEFAULT '',
+        ADD COLUMN model text NOT NULL DEFAULT '',
+        ADD COLUMN style text NOT NULL DEFAULT 'abstract',
+        ADD COLUMN width int,
+        ADD COLUMN height int;
+    `,
+  },
 ];
 
 export async function migrate(db: Db): Promise<string[]> {

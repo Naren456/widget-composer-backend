@@ -9,6 +9,14 @@ type CompletionResponse = {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 };
 
+const REQUEST_TIMEOUT_MS = 75_000;
+const MAX_COMPLETION_TOKENS = 8_000;
+
+function isTimeoutError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" &&
+    ["TimeoutError", "AbortError"].includes(String((error as { name?: unknown }).name ?? "")));
+}
+
 /** OpenAI-compatible OpenRouter chat completions with key custody kept on the API. */
 export function openRouterProvider(apiKey: string, model: string): LlmProvider {
   return {
@@ -37,14 +45,14 @@ export function openRouterProvider(apiKey: string, model: string): LlmProvider {
               body: JSON.stringify({
                 model,
                 messages,
-                max_tokens: 16000,
+                max_tokens: MAX_COMPLETION_TOKENS,
                 response_format: { type: "json_object" },
                 provider: { require_parameters: true },
               }),
-              signal: AbortSignal.timeout(120_000),
+              signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
             });
           } catch (error) {
-            if (error instanceof Error && error.name === "TimeoutError") {
+            if (isTimeoutError(error)) {
               throw new LlmUnavailableError("The AI provider timed out.", "LLM_ERROR");
             }
             throw new LlmUnavailableError("Could not reach the AI provider.", "LLM_UNAVAILABLE");
@@ -60,7 +68,15 @@ export function openRouterProvider(apiKey: string, model: string): LlmProvider {
             throw new LlmUnavailableError("The AI provider returned an error.", "LLM_ERROR");
           }
 
-          const payload = (await response.json()) as CompletionResponse;
+          let payload: CompletionResponse;
+          try {
+            payload = await response.json() as CompletionResponse;
+          } catch (error) {
+            if (isTimeoutError(error)) {
+              throw new LlmUnavailableError("The AI provider timed out while reading its response.", "LLM_ERROR");
+            }
+            throw new LlmUnavailableError("The AI provider returned an unreadable response.", "LLM_ERROR");
+          }
           const choice = payload.choices?.[0];
           const usage = {
             inputTokens: payload.usage?.prompt_tokens ?? 0,

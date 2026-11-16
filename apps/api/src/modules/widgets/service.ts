@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type Db, json } from "../../db/db.js";
 import { HttpError, notFound } from "../../lib/errors.js";
-import { SCHEMA_VERSION, type WidgetSpec } from "../../spec/widget-spec.js";
+import { type WidgetSpec } from "../../spec/widget-spec.js";
 
 /**
  * Widgets and their immutable versions. Every query is scoped by user id, so a widget
@@ -124,7 +124,7 @@ export async function createWidget(
     await tx.query(
       `INSERT INTO widget_versions (id, widget_id, version_number, schema_version, spec_json, source, generation_run_id)
        VALUES ($1, $2, 1, $3, $4::jsonb, $5, $6)`,
-      [randomUUID(), id, SCHEMA_VERSION, json(input.spec), runId ? "generated" : "manual", runId],
+      [randomUUID(), id, input.spec.schemaVersion, json(input.spec), runId ? "generated" : "manual", runId],
     );
   });
   return getWidget(db, userId, id);
@@ -145,7 +145,7 @@ export async function addVersion(
     await tx.query(
       `INSERT INTO widget_versions (id, widget_id, version_number, schema_version, spec_json, source, generation_run_id)
        SELECT $1, $2, COALESCE(MAX(version_number), 0) + 1, $3, $4::jsonb, $5, $6 FROM widget_versions WHERE widget_id = $2`,
-      [versionId, widgetId, SCHEMA_VERSION, json(input.spec), runId ? "edited" : "manual", runId],
+      [versionId, widgetId, input.spec.schemaVersion, json(input.spec), runId ? "edited" : "manual", runId],
     );
     await tx.query("UPDATE widgets SET updated_at = now() WHERE id = $1", [widgetId]);
   });
@@ -238,4 +238,19 @@ export async function removeInstance(db: Db, userId: string, widgetId: string, i
     [instanceId, widgetId, userId],
   );
   if (rows.length === 0) throw notFound("Instance");
+}
+
+/** Idempotently marks a launcher placement removed using its app-install identity. */
+export async function removeInstanceByPlatform(
+  db: Db,
+  userId: string,
+  widgetId: string,
+  input: { deviceId: string; platformWidgetId: number },
+): Promise<void> {
+  await ownedWidget(db, userId, widgetId);
+  await db.query(
+    `UPDATE widget_instances SET status = 'removed'
+     WHERE widget_id = $1 AND user_id = $2 AND device_id = $3 AND platform_widget_id = $4 AND status <> 'removed'`,
+    [widgetId, userId, input.deviceId, input.platformWidgetId],
+  );
 }

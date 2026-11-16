@@ -23,7 +23,7 @@ const REVIEW_SCHEMA = {
 
 const REVIEW_SYSTEM = `You are WidgetComposer's widget design reviewer. Review a validated widget specification for quality before a user places it on their Android home screen. Return only the requested JSON.
 
-Assess the design from its structure and text, not from a screenshot: you cannot claim to have seen or rendered pixels. Check one clear primary purpose, compact glanceability, content hierarchy, likely clipping at small widget sizes, excessive density, image usage and accessible labels, useful actions, binding/data coherence, font choice, contrast/theme consistency, and whether the layout can be understood quickly. The actual target can vary by launcher, so phrase fit concerns as likely risks, not certain pixel measurements.
+Assess the design from its structure and text, not from a screenshot: you cannot claim to have seen or rendered pixels. Check one clear primary purpose, compact glanceability, content hierarchy, likely clipping at small widget sizes, excessive density, image usage and accessible labels, useful actions, binding/data coherence, font choice, palette cohesion and contrast, card/surface use, and whether the layout can be understood quickly. The actual target can vary by launcher, so phrase fit concerns as likely risks, not certain pixel measurements.
 
 Use these limits and supported nodes:
 - Maximum ${LIMITS.maxNodes} nodes and depth ${LIMITS.maxDepth}; the app has small, medium, and large placement options.

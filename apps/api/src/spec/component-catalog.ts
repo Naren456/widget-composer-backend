@@ -6,20 +6,21 @@ export const COMPONENT_CATALOG = [
   { type: "column", description: "Vertical container; children are drawn top to bottom. Can draw a padded rounded card using the palette surface color.", properties: ["gap", "surface", "radiusDp", "paddingDp", "children"] },
   { type: "row", description: "Horizontal container; children are drawn left to right. Can draw a padded rounded card using the palette surface color.", properties: ["gap", "surface", "radiusDp", "paddingDp", "children"] },
   { type: "text", description: "Static or data-bound text with hierarchy, explicit size, weight, and palette color token.", properties: ["text", "style", "fontSizeDp", "weight", "colorToken"] },
-  { type: "image", description: "Website image or explicitly attached image asset, with safe size, crop mode, and rounded corners. Use widthDp/heightDp for a prominent hero image.", properties: ["source", "alt", "widthDp", "heightDp", "fit", "radiusDp"] },
+  { type: "image", description: "Website image, explicitly attached image, or original generated illustration. For an original illustration use source=generate_image, imagePrompt for detailed subject/composition/style/palette/lighting, and a short accessible alt; use widthDp/heightDp for a prominent hero image.", properties: ["source", "alt", "imagePrompt", "widthDp", "heightDp", "fit", "radiusDp"] },
   { type: "link", description: "Short clickable label that opens a connector-provided HTTPS URL binding.", properties: ["label", "urlBinding"] },
   { type: "clock", description: "Device-local time with 12_hour or 24_hour format and optional date and seconds.", properties: ["format", "showDate", "showSeconds"] },
   { type: "metric", description: "One large value from a valid binding with a short label.", properties: ["label", "valueBinding"] },
   { type: "progress", description: "Compact labeled progress bar for a numeric binding such as completion count; maxValue defines the full scale.", properties: ["label", "valueBinding", "maxValue", "widthDp", "heightDp"] },
+  { type: "device_info", description: "Read-only Android device information: battery level/status/health, Bluetooth and Wi-Fi radio state, internet transport, free/used storage, power saver, model, or Android version. Battery/storage can be shown as a progress bar.", properties: ["metric", "label", "display"] },
   { type: "list", description: "Compact list of one to five connector items; rows show title and repo/author metadata.", properties: ["source", "maxItems"] },
   { type: "streak_chart", description: "Compact 28-day GitHub contribution heatmap with current streak and past-year best streak summaries. Requires a GitHub contribution_streak data source.", properties: ["source"] },
   { type: "divider", description: "Thin horizontal separator.", properties: [] },
   { type: "spacer", description: "Fixed gap in dp from 1-64.", properties: ["sizeDp"] },
-  { type: "button", description: "Compact action button; actions are restricted to open_url, open_app or refresh.", properties: ["label", "action"] },
+  { type: "button", description: "Compact action button; actions are restricted to open_url, open_app, refresh or lock_screen. lock_screen is available only in WidgetSpec v8 when explicitly requested and asks the user to enable Android device-admin access before locking the screen.", properties: ["label", "action"] },
 ] as const;
 
 export const WIDGET_SIZES = ["small", "medium", "large"] as const;
-export const WIDGET_ACTIONS = ["open_url", "open_app", "refresh"] as const;
+export const WIDGET_ACTIONS = ["open_url", "open_app", "refresh", "lock_screen"] as const;
 export const WIDGET_THEMES = ["light", "dark", "system"] as const;
 export const WIDGET_FONT_FAMILIES = ["sans", "serif", "monospace"] as const;
 

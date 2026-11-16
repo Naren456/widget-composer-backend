@@ -42,6 +42,9 @@ export function anthropicProvider(apiKey: string, model: string): LlmProvider {
             });
           } catch (error) {
             // Most specific first. Upstream bodies are never passed to clients.
+            if (isTimeoutError(error)) {
+              throw new LlmUnavailableError("The AI provider timed out.", "LLM_ERROR");
+            }
             if (error instanceof Anthropic.RateLimitError) {
               throw new LlmUnavailableError("The AI provider is rate limiting requests.", "LLM_RATE_LIMITED");
             }
@@ -71,4 +74,14 @@ export function anthropicProvider(apiKey: string, model: string): LlmProvider {
       };
     },
   };
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const value = error as { name?: unknown; message?: unknown; cause?: unknown };
+  if (value.name === "TimeoutError" || value.name === "APIConnectionTimeoutError") return true;
+  const description = [value.message, value.cause instanceof Error ? value.cause.message : ""]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ");
+  return /(?:operation was aborted due to timeout|\btimeout\b|\btimed? out\b)/i.test(description);
 }

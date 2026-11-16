@@ -148,7 +148,7 @@ function downloadHtml(url: URL, address: string, family: number): Promise<Downlo
   });
 }
 
-type ImageAsset = { imageData: string; imageMimeType: string };
+export type ImageAsset = { imageData: string; imageMimeType: string };
 type ImageDownload = { asset: ImageAsset } | { redirect: string } | { asset: null };
 
 function downloadImage(url: URL, address: string, family: number): Promise<ImageDownload> {
@@ -215,6 +215,11 @@ async function fetchImageAsset(rawUrl: string): Promise<ImageAsset | null> {
     }
   }
   return null;
+}
+
+/** Fetches a safe, bounded image for widget data from a public HTTPS URL. */
+export function fetchWidgetImageAsset(rawUrl: string): Promise<ImageAsset | null> {
+  return fetchImageAsset(rawUrl);
 }
 
 function decodeHtml(value: string): string {
@@ -331,7 +336,7 @@ function relevantPageText(rawText: string, query = ""): string {
   return selected.join(" ").slice(0, MAX_PAGE_TEXT_CHARS);
 }
 
-function extract(html: string, url: URL, query = "", truncated = false): SourceData {
+export function extractWebsiteHtml(html: string, url: URL, query = "", truncated = false): SourceData {
   const content = html.replace(/<!--[\s\S]*?-->|<(script|style|svg|noscript|template|nav|footer)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
   const title = readable(content.match(/<title\b[^>]*>([\s\S]*?)<\/title\s*>/i)?.[1] ?? meta(html, ["og:title", "twitter:title"])) || url.hostname;
   const description = readable(meta(html, ["description", "og:description", "twitter:description"]));
@@ -402,8 +407,12 @@ function extract(html: string, url: URL, query = "", truncated = false): SourceD
   const items = [
     { title, url: canonicalUrl, repo: url.hostname, number: 0, author: description, updatedAt: "", ...(logoUrl ? { imageUrl: logoUrl } : {}) },
     ...headings.slice(0, 3).map((heading, index) => ({ title: heading, url: canonicalUrl, repo: url.hostname, number: index + 1, author: description, updatedAt: "" })),
-    ...structuredData.slice(0, 3).map((entry, index) => ({
-      title: entry.headline || entry.name || entry.description || `Page detail ${index + 1}`,
+    ...structuredData.filter((entry) => {
+      if (entry.headline) return true;
+      if (/\b(?:website|webpage|organization|person|breadcrumblist|imageobject)\b/i.test(entry.type)) return false;
+      return Boolean(entry.name || entry.description);
+    }).slice(0, 3).map((entry, index) => ({
+      title: entry.headline || entry.name || entry.description,
       url: entry.url || canonicalUrl,
       repo: url.hostname,
       number: index + 1,
@@ -431,14 +440,14 @@ export async function fetchWebsitePage(rawUrl: string, options: { imageIndexes?:
       const { url, address, family } = await checkedUrl(currentUrl);
       const result = await downloadHtml(url, address, family);
       if ("html" in result) {
-        const data = extract(result.html, url, options.searchText, result.truncated ?? false);
+        const data = extractWebsiteHtml(result.html, url, options.searchText, result.truncated ?? false);
         if (options.imageIndexes?.length) {
           // Fetch exactly the indices referenced by image nodes (up to three). Taking
           // the first two requested indices used to leave later image nodes without
           // bytes, even though the URL was present in the widget data.
           const imageItems = [...new Set(options.imageIndexes)].slice(0, 3)
             .map((index) => data.items[index])
-            .filter((item) => item?.imageUrl);
+            .filter((item) => item !== undefined);
           const assetCache = new Map<string, ImageAsset | null>();
           const getAsset = async (imageUrl: string) => {
             if (!assetCache.has(imageUrl)) assetCache.set(imageUrl, await fetchImageAsset(imageUrl));
@@ -446,7 +455,7 @@ export async function fetchWebsitePage(rawUrl: string, options: { imageIndexes?:
           };
           await Promise.all(imageItems.map(async (item) => {
             const candidates = [
-              item.imageUrl!,
+              ...(item.imageUrl ? [item.imageUrl] : []),
               ...(data.metadata?.images ?? []).slice(0, 6).map((image) => image.url),
             ].filter((imageUrl, index, all) => all.indexOf(imageUrl) === index);
             for (const imageUrl of candidates) {

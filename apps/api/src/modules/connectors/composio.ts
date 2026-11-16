@@ -24,7 +24,7 @@ export interface ConnectorClient {
 export class ToolError extends Error {
   constructor(
     message: string,
-    readonly kind: "unauthorized" | "rate_limited" | "upstream",
+    readonly kind: "unauthorized" | "rate_limited" | "upstream" | "misconfigured",
   ) {
     super(message);
     this.name = "ToolError";
@@ -36,6 +36,7 @@ const PENDING = new Set(["INITIALIZING", "INITIATED"]);
 
 /** Composio reports failures as text, so the kind is read from the message. */
 function classify(message: string): ToolError["kind"] {
+  if (/APIKey_InvalidAPIKey|invalid API key|check you are using a valid API key/i.test(message)) return "misconfigured";
   if (/\b401\b|unauthori[sz]ed|bad credentials|no connected account|not connected|expired|revoked/i.test(message)) return "unauthorized";
   if (/\b429\b|rate limit/i.test(message)) return "rate_limited";
   return "upstream";
@@ -64,10 +65,18 @@ export function composioClient(apiKey: string, authConfigId?: string): Connector
     },
 
     async accounts(userId, toolkit) {
-      const { items } = await composio.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkit] });
-      return items
-        .filter((a) => !PENDING.has(a.status))
-        .map((a) => ({ id: a.id, status: a.status === "ACTIVE" && !a.isDisabled ? "active" : "needs_reauth", createdAt: a.createdAt }));
+      try {
+        const { items } = await composio.connectedAccounts.list({ userIds: [userId], toolkitSlugs: [toolkit] });
+        return items
+          .filter((a) => !PENDING.has(a.status))
+          .map((a) => ({ id: a.id, status: a.status === "ACTIVE" && !a.isDisabled ? "active" : "needs_reauth", createdAt: a.createdAt }));
+      } catch (error) {
+        const kind = classify(error instanceof Error ? error.message : String(error));
+        const message = kind === "misconfigured"
+          ? "Composio rejected the server API key. Check COMPOSIO_API_KEY and restart the API."
+          : "Composio could not list connected accounts. Try again shortly.";
+        throw new ToolError(message, kind);
+      }
     },
 
     async disconnect(accountId) {
@@ -84,11 +93,13 @@ export function composioClient(apiKey: string, authConfigId?: string): Connector
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new ToolError(`Composio ${tool} failed: ${message}`, classify(message));
+        const kind = classify(message);
+        throw new ToolError(kind === "misconfigured" ? "Composio rejected the server API key. Check COMPOSIO_API_KEY and restart the API." : `Composio ${tool} failed: ${message}`, kind);
       }
       if (!result.successful) {
         const message = result.error ?? "unknown error";
-        throw new ToolError(`Composio ${tool} failed: ${message}`, classify(message));
+        const kind = classify(message);
+        throw new ToolError(kind === "misconfigured" ? "Composio rejected the server API key. Check COMPOSIO_API_KEY and restart the API." : `Composio ${tool} failed: ${message}`, kind);
       }
       return result.data;
     },

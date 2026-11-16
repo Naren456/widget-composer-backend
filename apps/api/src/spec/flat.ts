@@ -1,6 +1,8 @@
 import {
   type AllowedAction,
   GITHUB_QUERIES,
+  DEVICE_METRICS,
+  NEWS_QUERIES,
   WEBSITE_QUERIES,
   ITEM_FIELDS,
   SCHEMA_VERSION,
@@ -22,11 +24,12 @@ import { DEFAULT_WIDGET_PALETTES, WIDGET_FONT_FAMILIES, WIDGET_THEMES, type Widg
 type FlatNode = { id: string } & (
   | { type: "column" | "row"; gap?: number; surface?: boolean; radiusDp?: number; paddingDp?: number; children: string[] }
   | { type: "text"; text: string; style?: "title" | "body" | "caption"; fontSizeDp?: number; weight?: "normal" | "medium" | "bold"; colorToken?: "text" | "muted" | "accent" }
-  | { type: "image"; source: string; alt?: string; widthDp?: number; heightDp?: number; fit?: "cover" | "contain"; radiusDp?: number }
+  | { type: "image"; source: string; alt?: string; imagePrompt?: string; widthDp?: number; heightDp?: number; fit?: "cover" | "contain"; radiusDp?: number }
   | { type: "link"; label: string; urlBinding: string }
   | { type: "clock"; format: "12_hour" | "24_hour"; showDate?: boolean; showSeconds?: boolean }
   | { type: "metric"; label: string; valueBinding: string }
   | { type: "progress"; label?: string; valueBinding: string; maxValue: number; widthDp?: number; heightDp?: number }
+  | { type: "device_info"; metric: (typeof DEVICE_METRICS)[number]; label?: string; display?: "text" | "metric" | "progress" }
   | { type: "list"; source: string; maxItems: number }
   | { type: "streak_chart"; source: string }
   | { type: "divider" }
@@ -87,6 +90,12 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
           query: { enum: [...WEBSITE_QUERIES] },
           url: { type: "string", description: "A public HTTPS page URL supplied by the user or copied exactly from web research results" },
         }),
+        obj(["id", "connector", "query", "url"], {
+          id: { type: "string", description: "Lowercase id used in bindings, e.g. news" },
+          connector: { const: "news" },
+          query: { enum: [...NEWS_QUERIES] },
+          url: { type: "string", description: "A public HTTPS site or RSS/Atom feed URL supplied by the user or copied exactly from web research results. The server discovers a linked feed when given a site URL." },
+        }),
       ],
     },
   },
@@ -117,8 +126,9 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
         obj(["id", "type", "source"], {
           id: nodeId,
           type: { const: "image" },
-          source: { type: "string", description: "Website image binding such as site.items[0].imageUrl, or attached_image when the user wants their uploaded image used as widget content" },
+          source: { type: "string", description: "Plain website image binding such as site.items[0].imageUrl (no {{ }} wrapper), attached_image when using the user's uploaded image as content, or generate_image when creating an original image asset" },
           alt: { type: "string", description: "Short accessible description" },
+          imagePrompt: { type: "string", description: "When source is generate_image, describe the original image subject, composition, style, palette, lighting, and crop in up to 600 characters; no text or typography in the image" },
           widthDp: { type: "integer", description: "24-240 dp; use 110-180 for a compact hero image" },
           heightDp: { type: "integer", description: "24-240 dp; use 60-120 for a compact hero image" },
           fit: { enum: ["cover", "contain"] },
@@ -152,6 +162,13 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
           widthDp: { type: "integer" },
           heightDp: { type: "integer" },
         }),
+        obj(["id", "type", "metric"], {
+          id: nodeId,
+          type: { const: "device_info" },
+          metric: { enum: [...DEVICE_METRICS] },
+          label: { type: "string", description: "Short display label" },
+          display: { enum: ["text", "metric", "progress"] },
+        }),
         obj(["id", "type", "source", "maxItems"], {
           id: nodeId,
           type: { const: "list" },
@@ -177,6 +194,7 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
               }),
               obj(["type", "screen"], { type: { const: "open_app" }, screen: { const: "widget_details" } }),
               obj(["type"], { type: { const: "refresh" } }),
+              obj(["type"], { type: { const: "lock_screen" } }),
             ],
           },
         }),
@@ -189,8 +207,8 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
 export const BINDING_HELP = `<source>.count, or <source>.items[i].<field> with i from 0 to 19 and field one of ${ITEM_FIELDS.join(", ")}`;
 
 /**
- * Rebuilds the tree. Rejects duplicate ids, missing references, cycles, nodes used
- * twice and nodes nothing points to — each would mean the model's intent is unclear.
+ * Rebuilds the tree. Rejects duplicate ids, missing references, cycles and nodes used
+ * twice. Detached nodes are discarded because they cannot affect the rendered widget.
  */
 export function toTree(flat: FlatSpec): { ok: true; spec: WidgetSpec } | { ok: false; issues: SpecIssue[] } {
   const issues: SpecIssue[] = [];
@@ -227,9 +245,6 @@ export function toTree(flat: FlatSpec): { ok: true; spec: WidgetSpec } | { ok: f
   };
 
   const root = build(flat.rootId, []);
-  for (const id of byId.keys()) {
-    if (!placed.has(id)) issues.push({ path: `nodes.${id}`, message: "node is not reachable from the root" });
-  }
   if (issues.length > 0 || !root) return { ok: false, issues };
 
   return {
