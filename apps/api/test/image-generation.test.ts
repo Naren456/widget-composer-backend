@@ -136,6 +136,26 @@ describe("image-generation API and saved assets", () => {
     assert.ok(Buffer.from(image.body.imageData, "base64").length < 512_000);
     assert.equal((await server.request(`/v1/image-assets/${assetId}`, { token: other.accessToken })).status, 404);
 
+    const widgetSpec = {
+      schemaVersion: 9,
+      name: "Wallpaper clock",
+      presentation: {
+        theme: "dark",
+        refreshMinutes: 30,
+        backgroundImageAssetId: assetId,
+        palette: { background: "#101010", surface: "#222222", text: "#FFFFFF", muted: "#AAAAAA", accent: "#00FF00", border: "#777777" },
+      },
+      dataSources: [],
+      root: { type: "column", children: [{ type: "clock", format: "12_hour" }] },
+    };
+    const savedWidget = await server.request("/v1/widgets", { token: owner.accessToken, body: { spec: widgetSpec } });
+    assert.equal(savedWidget.status, 201);
+    const widgetData = await server.request(`/v1/widgets/${savedWidget.body.id}/data`, { token: owner.accessToken });
+    assert.equal(widgetData.status, 200);
+    assert.equal(widgetData.body.data[`asset_${assetId}`].items[0].imageMimeType, "image/jpeg");
+    assert.equal((await server.request(`/v1/image-assets/${assetId}`, { method: "DELETE", token: owner.accessToken })).status, 409);
+
+    await server.request(`/v1/widgets/${savedWidget.body.id}`, { method: "DELETE", token: owner.accessToken });
     assert.equal((await server.request(`/v1/image-assets/${assetId}`, { method: "DELETE", token: owner.accessToken })).status, 204);
     assert.equal((await server.request(`/v1/image-assets/${assetId}`, { token: owner.accessToken })).status, 404);
     await server.close();
