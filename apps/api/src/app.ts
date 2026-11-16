@@ -1,105 +1,69 @@
-import express, {
-  type NextFunction,
-  type Request,
-  type Response,
-} from "express";
-import { z } from "zod";
+import express, { type NextFunction, type Request, type Response } from "express";
 
-const generationSchema = z
-  .object({
-    prompt: z.string().trim().min(5).max(500),
-  })
-  .strict();
+import { type Deps } from "./deps.js";
+import { errorHandler } from "./lib/errors.js";
+import { routes } from "./routes.js";
 
-export function buildApp() {
+export type { Deps };
+
+export function buildApp(deps: Deps) {
   const app = express();
+  app.disable("x-powered-by");
+  // Behind one reverse proxy in production, so req.ip is the client, not the proxy.
+  app.set("trust proxy", deps.config.NODE_ENV === "production" ? 1 : false);
 
-  app.use(express.json({ limit: "16kb" }));
+  if (deps.config.NODE_ENV !== "test") app.use(requestLog);
 
-  // Health check
-  app.get("/health", (_req, res) => {
-    res.status(200).json({
-      status: "ok",
-      service: "widgetcomposer-api",
-    });
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    next();
   });
+  app.use(cors(deps.config.CORS_ORIGINS));
+  // Only widget generation accepts a reference image; keep other JSON endpoints small.
+  app.use("/v1/widgets/generate", express.json({ limit: "5mb" }));
+  app.use(express.json({ limit: "64kb" }));
 
-  // Validate a user's widget-generation prompt
-  app.post("/v1/widget-generations", (req, res) => {
-    const result = generationSchema.safeParse(req.body);
-
-    if (!result.success) {
-      return res.status(400).json({
-        error: {
-          code: "INVALID_REQUEST",
-          message: "Please enter a valid widget prompt.",
-          details: result.error.issues.map((issue) => ({
-            field: issue.path.join("."),
-            message: issue.message,
-          })),
-        },
-      });
-    }
-
-    // Step 1 only: validate the prompt.
-    // We have not implemented AI or website fetching yet.
-
-    return res.status(200).json({
-      status: "validated",
-      data: {
-        prompt: result.data.prompt,
-      },
-      message: "Prompt received successfully.",
-    });
-  });
+  app.use(routes(deps));
 
   // Handle unknown routes
   app.use((_req, res) => {
-    res.status(404).json({
-      error: {
-        code: "NOT_FOUND",
-        message: "Route not found.",
-      },
-    });
+    res.status(404).json({ error: { code: "NOT_FOUND", message: "Route not found." } });
   });
-
   // Centralized error handler — must be registered last.
-  app.use(
-    (
-      err: unknown,
-      _req: Request,
-      res: Response,
-      next: NextFunction,
-    ) => {
-      if (res.headersSent) {
-        return next(err);
-      }
-
-      const error = err as { status?: number; statusCode?: number };
-      const status = error.statusCode ?? error.status;
-
-      if (status === 400 || status === 413) {
-        return res.status(status).json({
-          error: {
-            code: status === 413 ? "PAYLOAD_TOO_LARGE" : "INVALID_REQUEST",
-            message:
-              status === 413
-                ? "Request body is too large."
-                : "Invalid request body.",
-          },
-        });
-      }
-
-      console.error("Unexpected API error:", err);
-
-      return res.status(500).json({
-        error: {
-          code: "INTERNAL_ERROR",
-          message: "An unexpected error occurred.",
-        },
-      });
-    },
-  );
+  app.use(errorHandler);
 
   return app;
+}
+
+/** CORS for the allow-listed browser origins only. Native apps send no Origin and are unaffected. */
+function cors(origins: string[]) {
+  const allowed = new Set(origins);
+  return (req: Request, res: Response, next: NextFunction) => {
+    const origin = req.get("origin");
+    if (origin && allowed.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Headers", "authorization, content-type");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Max-Age", "600");
+    }
+    if (req.method === "OPTIONS") return res.status(origin && allowed.has(origin) ? 204 : 404).end();
+    next();
+  };
+}
+
+/** One console line per request: method, path, status, duration, and the error code on failures. */
+function requestLog(req: Request, res: Response, next: NextFunction) {
+  const start = performance.now();
+  res.on("finish", () => {
+    const ms = Math.round(performance.now() - start);
+    const code = res.locals.errorCode ? ` ${res.locals.errorCode}: ${res.locals.errorMessage}` : "";
+    const line = `${new Date().toISOString()} ${req.method} ${req.path} ${res.statusCode} ${ms}ms${code}`;
+    if (res.statusCode >= 500) console.error(line);
+    else if (res.statusCode >= 400) console.warn(line);
+    else console.log(line);
+  });
+  next();
 }

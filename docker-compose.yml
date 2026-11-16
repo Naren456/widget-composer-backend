@@ -1,0 +1,34 @@
+# Local development database. The API itself runs with `npm run dev` in apps/api.
+services:
+  searxng:
+    image: ghcr.io/searxng/searxng:2026.11.11-248b8ffc0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SEARXNG_BASE_URL: http://localhost:8080/
+      SEARXNG_PORT: 8080
+      SEARXNG_BIND_ADDRESS: 0.0.0.0
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-widgetcomposer-local-only-secret}
+      SEARXNG_LIMITER: "false"
+      SEARXNG_PUBLIC_INSTANCE: "false"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: widgetcomposer
+      POSTGRES_PASSWORD: widgetcomposer
+      POSTGRES_DB: widgetcomposer
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U widgetcomposer"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  db-data:
