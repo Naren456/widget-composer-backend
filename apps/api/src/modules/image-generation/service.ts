@@ -9,6 +9,7 @@ import { type ImageAspectRatio, type ImageStyle, dimensionsFor } from "./schema.
 
 const MAX_STORED_IMAGE_BYTES = 512_000;
 const MAX_PROMPT_CHARS = 1_000;
+const MAX_SAVED_ASSETS_PER_USER = 50;
 
 const styleDirections: Record<ImageStyle, string> = {
   minimal: "Use a premium minimal visual style with restrained forms and generous negative space.",
@@ -31,6 +32,13 @@ export async function generateAndStoreImage(
   input: { prompt: string; style: ImageStyle; aspectRatio: ImageAspectRatio; referenceImage?: { mediaType: GeneratedImage["mediaType"]; base64: string } },
 ): Promise<ImageAssetMetadata> {
   const startedAt = Date.now();
+  const savedCount = await db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM widget_image_assets WHERE user_id = $1 AND expires_at IS NULL",
+    [userId],
+  );
+  if (Number(savedCount.rows[0]?.count ?? 0) >= MAX_SAVED_ASSETS_PER_USER) {
+    throw new HttpError(429, "IMAGE_ASSET_QUOTA_REACHED", "Delete an unused image asset before generating more.");
+  }
   const prompt = enhanceWidgetImagePrompt(input.prompt, input.style);
   const { width, height } = dimensionsFor(input.aspectRatio);
   const generated = await provider({

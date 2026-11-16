@@ -43,11 +43,18 @@ npm test                         # 24 tests on PGlite (in-process Postgres), no 
 
 `ANTHROPIC_API_KEY` and `COMPOSIO_API_KEY` are optional: without them, generation and
 GitHub connect answer 503 with a clear message, and previews use sample data. Set
-`OPENAI_API_KEY` to enable optional original widget artwork; generated PNGs are stored
-as user-owned image assets and flow through the same preview/save/home-screen renderer
-path as uploaded images. With `OPENAI_API_KEY`, the default provider is the OpenAI Images
-API; without it, Playwright ChatGPT is selected. To use the Playwright browser provider,
-set `IMAGE_GENERATION_PROVIDER=playwright_chatgpt`,
+Set `NVIDIA_API_KEY` to enable the Image Studio, which uses NVIDIA Build's FLUX.2 Klein 4B
+endpoint by default. The key stays on the server. `NVIDIA_IMAGE_MODEL` and
+`NVIDIA_IMAGE_API_URL` select the provider model and HTTPS endpoint. When no NVIDIA key
+is configured, `OPENAI_API_KEY` enables the optional OpenAI Images provider; the
+Playwright/ChatGPT browser provider remains available as an explicit fallback. Set
+`IMAGE_GENERATION_PROVIDER` to override provider selection. Image Studio accepts
+square, portrait, and landscape requests, enhances prompts for widget-safe artwork, and
+supports reference-image editing with NVIDIA. Generated images are normalized to JPEG
+at no more than 512 KB, retained as user-owned assets, and supplied through the same
+preview and Android widget data path as other images. Each user can retain up to 50
+generated images and request at most three generations per minute per API process.
+To use the Playwright browser provider, set `IMAGE_GENERATION_PROVIDER=playwright_chatgpt`,
 set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for the host, and run `npm run image:login`
 from `apps/api`. This opens ordinary Chrome (not automation-controlled) with a dedicated
 profile. Sign into ChatGPT and close that Chrome window, then restart the API. The API uses that profile only to submit image
@@ -77,6 +84,9 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
 | POST | `/v1/widgets/generate` | `{ prompt, widgetId? }` → `{ spec, generationRunId }` (edit when `widgetId`) |
 | POST | `/v1/widgets/validate` | `{ spec, renderer? }` → `{ valid, issues }` |
 | POST | `/v1/widgets/preview-data` | `{ spec }` → live data, or sample data flagged `sample: true` |
+| POST | `/v1/image-generation/generate` | Generate and save widget artwork; returns metadata and an authenticated asset URL |
+| GET | `/v1/image-assets` | List the signed-in user's saved image assets |
+| GET/DELETE | `/v1/image-assets/:id` | Retrieve or delete an unused owned image asset |
 | GET/POST | `/v1/widgets` | List / create (version 1) |
 | GET/PATCH/DELETE | `/v1/widgets/:id` | Read / rename or archive / delete |
 | GET/POST | `/v1/widgets/:id/versions` | List / save a new immutable version |
@@ -111,6 +121,9 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
   Composio project key plus `read:user` on its GitHub OAuth config.
 - **Widget data** is cache-first: the last good snapshot is kept, and a failed refresh records
   `lastError` instead of replacing good data.
+- **Image Studio** uses NVIDIA FLUX.2 Klein 4B by default when configured. Images are
+  compressed and bounded for Android widget transport; saved asset IDs can be rendered
+  as image nodes or as a WidgetSpec v9 background while clocks, labels, and data remain native.
 - **News feeds** (`src/modules/widget-data/news.ts`) discover a linked RSS/Atom feed from a publisher URL, normalize story fields and thumbnails, and fall back to linked page headlines. News/headline generation uses this live-story provider when the model otherwise selects a generic website snapshot.
 - **Auth** is anonymous per device for now; a sign-in provider can attach to the same user rows.
 

@@ -172,6 +172,9 @@ export function routes(deps: Deps): Router {
       throw new HttpError(503, "IMAGE_GENERATION_UNAVAILABLE", "Image generation is not configured on the server.");
     }
     const body = parse(imageGenerationRequestSchema, req.body, "Enter a prompt and choose an image style and aspect ratio.");
+    if (body.referenceImage && !deps.imageGenerationProvider.supportsEditing) {
+      throw new HttpError(422, "IMAGE_EDITING_UNAVAILABLE", "The configured image provider does not support reference-image editing.");
+    }
     if (body.referenceImage) {
       const bytes = Buffer.from(body.referenceImage.base64, "base64");
       const validSignature = body.referenceImage.mediaType === "image/jpeg"

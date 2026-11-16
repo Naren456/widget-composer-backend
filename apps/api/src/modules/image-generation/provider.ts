@@ -8,7 +8,10 @@ export type ImageGenerationInput = {
   referenceImage?: { mediaType: "image/jpeg" | "image/png" | "image/webp"; base64: string };
 };
 
-export type ImageGenerationProvider = ((input: ImageGenerationInput) => Promise<GeneratedImage>) & { model?: string };
+export type ImageGenerationProvider = ((input: ImageGenerationInput) => Promise<GeneratedImage>) & {
+  model?: string;
+  supportsEditing?: boolean;
+};
 
 const MAX_RESPONSE_BYTES = 16_000_000;
 const TIMEOUT_MS = 120_000;
@@ -79,6 +82,7 @@ export function nvidiaImageGenerationProvider(options: {
     return { mediaType, base64: bytes.toString("base64") };
   };
   generate.model = options.model;
+  generate.supportsEditing = true;
   return generate;
 }
 
