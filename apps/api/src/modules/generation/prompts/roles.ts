@@ -11,7 +11,7 @@ export const EDITING_AGENT_PROMPT = `EDITING AGENT\nWhen an existing widget is s
 
 export const VALIDATION_AGENT_PROMPT = `VALIDATION ENGINE\nThe server is authoritative: its schema, component/provider registries, authorization checks, and renderer constraints decide what can be saved. Repair validation issues in the bounded attempts provided. Never return executable JavaScript, Kotlin, or arbitrary code.`;
 
-export function assembleAgentPrompts(baseSystemPrompt: string, providerRegistry: string, imageGenerationEnabled: boolean): string {
+export function assembleAgentPrompts(baseSystemPrompt: string, providerRegistry: string): string {
   return [
     ORCHESTRATOR_PROMPT,
     DESIGN_AGENT_PROMPT,
@@ -20,9 +20,6 @@ export function assembleAgentPrompts(baseSystemPrompt: string, providerRegistry:
     EDITING_AGENT_PROMPT,
     VALIDATION_AGENT_PROMPT,
     `REGISTERED PROVIDERS\n${providerRegistry}`,
-    imageGenerationEnabled
-      ? "IMAGE TOOL\nOriginal image generation is available. Use it only when the user wants original artwork; generated-image nodes are downloaded and attached as owned assets by the server."
-      : "IMAGE TOOL\nOriginal image generation is unavailable for this request. Do not emit generate_image nodes and do not reject the widget just because original artwork is unavailable; use a supplied website image, an explicitly attached image, or omit art.",
     `WIDGETCOMPOSER SPECIFIC CONSTRAINTS\n${baseSystemPrompt}`,
   ].join("\n\n");
 }

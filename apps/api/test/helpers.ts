@@ -1,45 +1,62 @@
 import { randomBytes } from "node:crypto";
 import { type AddressInfo } from "node:net";
+import { execFile } from "node:child_process";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { PGlite, type Transaction } from "@electric-sql/pglite";
+import { PGlite } from "@electric-sql/pglite";
+import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { PrismaClient } from "@prisma/client";
 
 import { buildApp } from "../src/app.js";
 import { type Config, loadConfig } from "../src/config.js";
-import { type Db } from "../src/db/db.js";
-import { migrate } from "../src/db/migrations.js";
 import { type ConnectedAccount, type ConnectorClient } from "../src/modules/connectors/composio.js";
 import { type LlmProvider, type LlmReply } from "../src/modules/generation/llm.js";
-import { type ImageGenerationProvider } from "../src/modules/image-generation/provider.js";
 
 process.env.NODE_ENV = "test";
 
-/** The production schema and SQL, run on PGlite (Postgres compiled to WebAssembly). */
-export async function testDb(): Promise<Db> {
+const API_DIR = fileURLToPath(new URL("..", import.meta.url));
+
+/** Run the Prisma-backed production schema on PGlite through its PostgreSQL wire protocol. */
+export type TestDb = PrismaClient & { close(): Promise<void> };
+
+export async function testDb(): Promise<TestDb> {
   const pg = new PGlite();
   await pg.waitReady;
-  const wrap = (q: PGlite | Transaction): Db => ({
-    async query<T>(text: string, params?: unknown[]) {
-      if (!params || params.length === 0) {
-        // Multi-statement SQL (migrations) has no parameters and must go through exec.
-        const results = await q.exec(text);
-        return { rows: (results.at(-1)?.rows ?? []) as T[] };
-      }
-      return { rows: (await q.query<T>(text, params)).rows };
-    },
-    transaction: (fn) => (q instanceof PGlite ? q.transaction((tx) => fn(wrap(tx))) : fn(wrap(q))),
+  const socket = new PGLiteSocketServer({ db: pg, port: 0, host: "127.0.0.1", maxConnections: 10 });
+  await socket.start();
+  const connectionString = `postgresql://postgres:postgres@${socket.getServerConn()}/postgres?schema=public`;
+  const client = new PrismaClient({ datasourceUrl: connectionString });
+  const db = Object.assign(client, {
     close: async () => {
-      if (q instanceof PGlite) await q.close();
+      await client.$disconnect();
+      await socket.stop();
+      await pg.close();
     },
   });
-  const db = wrap(pg);
-  await migrate(db);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(join(API_DIR, "node_modules/.bin/prisma"), [
+        "migrate",
+        "deploy",
+        "--schema",
+        join(API_DIR, "prisma/schema.prisma"),
+      ], {
+        cwd: API_DIR,
+        env: { ...process.env, DATABASE_URL: connectionString },
+      }, (error) => error ? reject(error) : resolve());
+    });
+  } catch (error) {
+    await db.close();
+    throw error;
+  }
   return db;
 }
 
 export function testConfig(overrides: Record<string, string> = {}): Config {
   return loadConfig({
     NODE_ENV: "test",
-    DATABASE_URL: "pglite://memory",
+    DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
     SESSION_SECRET: randomBytes(32).toString("hex"),
     PUBLIC_API_URL: "https://api.test",
     CORS_ORIGINS: "http://localhost:8081",
@@ -105,7 +122,7 @@ export function fakeConnectors(
 
 export type TestServer = {
   url: string;
-  db: Db;
+  db: TestDb;
   config: Config;
   request: (path: string, init?: { method?: string; token?: string; body?: unknown; headers?: Record<string, string> }) => Promise<{
     status: number;
@@ -119,7 +136,6 @@ export type TestServer = {
 export async function startServer(opts: {
   llm?: LlmProvider | null;
   connectors?: ConnectorClient | null;
-  imageGenerationProvider?: ImageGenerationProvider | null;
   config?: Config;
 } = {}): Promise<TestServer> {
   const db = await testDb();
@@ -128,8 +144,6 @@ export async function startServer(opts: {
     db,
     config,
     llm: opts.llm ?? null,
-    imageGenerator: null,
-    imageGenerationProvider: opts.imageGenerationProvider ?? null,
     connectors: opts.connectors ?? null,
   });
   const server = app.listen(0);

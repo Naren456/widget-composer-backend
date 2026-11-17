@@ -126,9 +126,9 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
         obj(["id", "type", "source"], {
           id: nodeId,
           type: { const: "image" },
-          source: { type: "string", description: "Plain website image binding such as site.items[0].imageUrl (no {{ }} wrapper), attached_image when using the user's uploaded image as content, or generate_image when creating an original image asset" },
+          source: { type: "string", description: "Plain website image binding such as site.items[0].imageUrl (no {{ }} wrapper) or attached_image when using the user's uploaded image as content" },
           alt: { type: "string", description: "Short accessible description" },
-          imagePrompt: { type: "string", description: "When source is generate_image, describe the original image subject, composition, style, palette, lighting, and crop in up to 600 characters; no text or typography in the image" },
+          imagePrompt: { type: "string", description: "Optional description when the image is a user-uploaded asset; keep it brief and descriptive" },
           widthDp: { type: "integer", description: "24-240 dp; use 110-180 for a compact hero image" },
           heightDp: { type: "integer", description: "24-240 dp; use 60-120 for a compact hero image" },
           fit: { enum: ["cover", "contain"] },

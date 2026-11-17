@@ -144,7 +144,7 @@ describe("generation", () => {
     assert.equal(llm.sent.length, 2);
     assert.match(llm.sent[1], /undeclared data source "missing"/);
 
-    const run = (await s.db.query<{ status: string; attempts: number }>("SELECT status, attempts FROM generation_runs")).rows[0];
+    const run = await s.db.generationRun.findMany({ select: { status: true, attempts: true } }).then((runs) => runs[0]);
     assert.deepEqual(run, { status: "succeeded", attempts: 2 });
 
     // The run id links a saved widget to its generation.
@@ -159,7 +159,7 @@ describe("generation", () => {
     const res = await s.request("/v1/widgets/generate", { token: accessToken, body: { prompt: "My open pull requests" } });
     assert.equal(res.status, 422);
     assert.equal(res.body.error.code, "GENERATION_INVALID");
-    const run = (await s.db.query<{ status: string; attempts: number }>("SELECT status, attempts FROM generation_runs")).rows[0];
+    const run = await s.db.generationRun.findMany({ select: { status: true, attempts: true } }).then((runs) => runs[0]);
     assert.deepEqual(run, { status: "invalid", attempts: 3 });
     await s.close();
   });
@@ -289,7 +289,7 @@ describe("GitHub through Composio, and widget data", () => {
     const failed = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });
     assert.equal(failed.status, 200);
     assert.equal(failed.body.data.prs.count, 2, "last good data is kept");
-    assert.match(failed.body.lastError, /GitHub returned 500/);
+    assert.match(failed.body.lastError, /Composio could not complete the connected-account request/);
 
     searchMode = "revoked";
     const revoked = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
+import { type PrismaClient } from "@prisma/client";
 
-import { type Db } from "../../db/db.js";
 import { HttpError } from "../../lib/errors.js";
+import { createGenerationRun } from "../../repositories/generation.repository.js";
 import { fetchWebsitePage } from "../widget-data/website.js";
 import { fetchNewsFeed } from "../widget-data/news.js";
 import { researchWeb } from "../research/agent.js";
@@ -11,7 +12,6 @@ import { type LlmImage, type LlmProvider, type LlmUsage, LlmUnavailableError } f
 import { fixWidgetPrompt } from "./prompt.js";
 import { COMPONENT_CATALOG, WIDGET_FONT_FAMILIES } from "../../spec/component-catalog.js";
 import { storeWidgetImage } from "../widget-data/assets.js";
-import { type ImageGenerator } from "./image-generator.js";
 import { assembleAgentPrompts } from "./prompts/roles.js";
 import { DATA_PROVIDER_CATALOG } from "../../spec/provider-catalog.js";
 import { devLog } from "../../lib/logger.js";
@@ -210,7 +210,7 @@ Rules:
 - Layout workflow: build a compact hierarchy with a title, one primary value or image, and at most a few supporting rows. Use gaps and dividers sparingly, avoid empty spacers, and choose the smallest component tree that communicates the request. Keep text labels short enough to fit without clipping.
 - Device information workflow: choose only the needed on-device metrics. Use progress display for battery_level or storage_used_percent, metric for one prominent value, and text for a compact status row. Never imply Bluetooth is connected to a particular device; this component reports only the local radio state.
 - Capability-adaptation workflow: build the user's main requested widget from the registered components even when optional refinements are unavailable. Do not reject a useful widget just because event-driven updates, conditional styling, or a secondary device metric is not supported. Approximate visual refinements with the available palette and components, omit unavailable secondary values, and never claim unsupported behavior. Set unsupported only when the central purpose cannot be built at all.
-- Image workflow: image node source values are plain sources or bindings such as "news.items[0].imageUrl" with no {{ }} wrapper; {{binding}} wrappers are only for text placeholders. Use a logo or thumbnail only when it improves recognition or meaning. Bind page/news images through a website or news item; use attached_image only when the user wants their uploaded image placed in the widget. When the user asks for original artwork, use at most one image node with source "generate_image", a short accessible alt, and imagePrompt describing the exact subject, composition, illustration/photo style, palette, lighting, and crop. Keep imagePrompt under 600 characters and avoid text inside generated art. Pick an image that supports the widget's glanceable content; do not create decorative art for every data-only widget. Set widthDp/heightDp and fit intentionally. Never put a raw remote URL in a node or invent an image URL.
+- Image workflow: image node source values are plain sources or bindings such as "news.items[0].imageUrl" with no {{ }} wrapper; {{binding}} wrappers are only for text placeholders. Use a logo or thumbnail only when it improves recognition or meaning. Bind page/news images through a website or news item; use attached_image only when the user wants their uploaded image placed in the widget. Pick an image that supports the widget's glanceable content; do not create decorative art for every data-only widget. Set widthDp/heightDp and fit intentionally. Never put a raw remote URL in a node or invent an image URL.
 - Action workflow: use open_url only when the destination URL is bound to a source item; use refresh for data that changes; use open_app for an app detail view. Use lock_screen only when the user explicitly requests a screen-lock shortcut, label it clearly (for example, "Lock screen"), and expect the app to explain and request Android device-admin access before enabling it. Do not add decorative buttons with no useful action.
 - Style workflow: match theme and system font to the subject (serif for editorial/news, monospace for data-heavy numeric displays, sans for most widgets). Use a strong title/body/caption hierarchy and restrained accent color. Avoid long all-caps labels, excessive text, and low-contrast captions.
 - Never put real-looking data (names, counts, titles) in text; live values come only from bindings.
@@ -224,9 +224,9 @@ export type GenerationOutcome = { spec: WidgetSpec; runId: string };
 type RunStatus = "succeeded" | "invalid" | "refused" | "failed";
 
 export async function generateSpec(
-  db: Db,
+  db: PrismaClient,
   provider: LlmProvider,
-  input: { userId: string; prompt: string; base?: WidgetSpec; searchBaseUrl: string; image?: LlmImage; imageAssetId?: string; imageGenerator?: ImageGenerator | null },
+  input: { userId: string; prompt: string; base?: WidgetSpec; searchBaseUrl: string; image?: LlmImage; imageAssetId?: string },
 ): Promise<GenerationOutcome> {
   const runId = randomUUID();
   const started = Date.now();
@@ -240,11 +240,17 @@ export async function generateSpec(
           `${usage.inputTokens}+${usage.outputTokens} tokens · "${input.prompt.slice(0, 80)}"`,
       );
     }
-    return db.query(
-      `INSERT INTO generation_runs (id, user_id, model, status, error_code, attempts, latency_ms, input_tokens, output_tokens)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [runId, input.userId, provider.model, status, errorCode, attempts, Date.now() - started, usage.inputTokens, usage.outputTokens],
-    );
+    return createGenerationRun(db, {
+      id: runId,
+      userId: input.userId,
+      model: provider.model,
+      status,
+      errorCode,
+      attempts,
+      latencyMs: Date.now() - started,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+    });
   };
 
   let message = "";
@@ -282,7 +288,6 @@ export async function generateSpec(
     const systemPrompt = assembleAgentPrompts(
       BASE_SYSTEM,
       DATA_PROVIDER_CATALOG.map((provider) => JSON.stringify(provider)).join("\n"),
-      Boolean(input.imageGenerator),
     );
     devLog("generation", "reference context ready", {
       researchSources: research.length,
@@ -336,20 +341,6 @@ export async function generateSpec(
           }
           issues = [{ path: "request scope", message: `The last draft rejected the request because: ${result.reason}. Recover by building the main requested widget with the available components. Treat unavailable refinements as optional: omit them or approximate their visual intent without claiming unsupported behavior.` }];
         } else if (result.kind === "spec") {
-          if (result.generatedImagePrompt) {
-            if (!input.imageGenerator) throw new HttpError(503, "IMAGE_GENERATION_UNAVAILABLE", "Original image generation is not configured. Website images and uploaded images still work.");
-            const palette = result.spec.presentation.palette;
-            const generated = await input.imageGenerator([
-              result.generatedImagePrompt,
-              `Widget palette: ${palette?.background ?? "#17191D"} background, ${palette?.surface ?? "#23262C"} surface, ${palette?.accent ?? "#E6A86A"} accent.`,
-              "Create a clean, high-quality image asset for a small Android home-screen widget. Keep the subject readable when cropped to a compact rectangle. No words, letters, logos, borders, or UI mockups.",
-            ].join(" "));
-            const assetId = await storeWidgetImage(db, input.userId, generated.mediaType, generated.base64);
-            result.spec.root = replaceGeneratedImage(result.spec.root, assetId);
-            const generatedChecked = validateSpec(result.spec);
-            if (!generatedChecked.ok) throw new HttpError(422, "GENERATION_INVALID", "The generated image could not be added to the widget.", generatedChecked.issues);
-            result.spec = generatedChecked.spec;
-          }
           await record("succeeded", null);
           return { spec: result.spec, runId };
         } else {
@@ -396,7 +387,7 @@ function interpret(
   text: string,
   imageAssetId?: string,
   prompt = "",
-): { kind: "spec"; spec: WidgetSpec; generatedImagePrompt?: string } | { kind: "unsupported"; reason: string } | { kind: "issues"; issues: SpecIssue[] } {
+): { kind: "spec"; spec: WidgetSpec } | { kind: "unsupported"; reason: string } | { kind: "issues"; issues: SpecIssue[] } {
   let flat: FlatSpec;
   try {
     flat = normalizeFlatSpecShape(JSON.parse(text));
@@ -411,12 +402,8 @@ function interpret(
   if (!tree.ok) return { kind: "issues", issues: tree.issues };
   if (imageAssetId) tree.spec.root = attachImageAsset(tree.spec.root, imageAssetId);
   tree.spec.root = normalizeImageBindings(tree.spec.root);
-  const generatedPrompts: string[] = [];
-  tree.spec.root = stageGeneratedImage(tree.spec.root, generatedPrompts);
-  if (generatedPrompts.length > 1) return { kind: "issues", issues: [{ path: "root", message: "generate at most one original image asset" }] };
-  if (generatedPrompts.some((prompt) => !prompt.trim())) return { kind: "issues", issues: [{ path: "root", message: "generated images need an imagePrompt describing the artwork" }] };
   const checked = validateSpec(useLiveNewsSource(tree.spec, prompt));
-  return checked.ok ? { kind: "spec", spec: checked.spec, ...(generatedPrompts[0] ? { generatedImagePrompt: generatedPrompts[0] } : {}) } : { kind: "issues", issues: checked.issues };
+  return checked.ok ? { kind: "spec", spec: checked.spec } : { kind: "issues", issues: checked.issues };
 }
 
 /** Repair common provider shape drift before strict semantic validation. */
@@ -464,23 +451,6 @@ function normalizeImageBindings(node: WidgetSpec["root"]): WidgetSpec["root"] {
   if (node.type === "column" || node.type === "row") {
     return { ...node, children: node.children.map(normalizeImageBindings) };
   }
-  return node;
-}
-
-const GENERATED_IMAGE_PLACEHOLDER = "asset_00000000-0000-4000-8000-000000000000";
-
-function stageGeneratedImage(node: WidgetSpec["root"], prompts: string[]): WidgetSpec["root"] {
-  if (node.type === "image" && node.source === "generate_image") {
-    prompts.push(node.imagePrompt ?? "");
-    return { ...node, source: GENERATED_IMAGE_PLACEHOLDER };
-  }
-  if (node.type === "column" || node.type === "row") return { ...node, children: node.children.map((child) => stageGeneratedImage(child, prompts)) };
-  return node;
-}
-
-function replaceGeneratedImage(node: WidgetSpec["root"], assetId: string): WidgetSpec["root"] {
-  if (node.type === "image" && node.source === GENERATED_IMAGE_PLACEHOLDER) return { ...node, source: assetId };
-  if (node.type === "column" || node.type === "row") return { ...node, children: node.children.map((child) => replaceGeneratedImage(child, assetId)) };
   return node;
 }
 

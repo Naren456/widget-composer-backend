@@ -58,11 +58,10 @@ const MAX_ITEMS = 10;
 const MAX_TITLE = 200;
 
 /** Search qualifiers per query; `@me` is the connected account. */
-const QUALIFIERS: Record<GitHubQuery, string> = {
+const QUALIFIERS: Record<Exclude<GitHubQuery, "contribution_streak">, string> = {
   assigned_issues: "is:issue is:open archived:false assignee:@me",
   open_pull_requests: "is:pr is:open archived:false author:@me",
   review_requests: "is:pr is:open archived:false review-requested:@me",
-  contribution_streak: "",
 };
 
 type SearchItem = {
@@ -175,11 +174,10 @@ async function runContributionQuery(client: ConnectorClient, userId: string): Pr
 
 /** Representative data for previews before an account is connected. Clearly flagged as sample. */
 export function sampleData(query: GitHubQuery): SourceData {
-  const titles: Record<GitHubQuery, string[]> = {
+  const titles: Record<Exclude<GitHubQuery, "contribution_streak">, string[]> = {
     assigned_issues: ["Fix crash on launch", "Update onboarding copy", "Investigate slow sync"],
     open_pull_requests: ["Add widget refresh worker", "Bump dependencies", "Improve error states"],
     review_requests: ["Refactor data layer", "Add dark theme", "Cache API responses"],
-    contribution_streak: [],
   };
   if (query === "contribution_streak") {
     const today = new Date();

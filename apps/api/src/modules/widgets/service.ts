@@ -1,7 +1,23 @@
 import { randomUUID } from "node:crypto";
+import { type PrismaClient } from "@prisma/client";
 
-import { type Db, json } from "../../db/db.js";
 import { HttpError, notFound } from "../../lib/errors.js";
+import {
+  addWidgetVersion,
+  createWidgetWithFirstVersion,
+  deleteOwnedWidget,
+  findLatestVersion,
+  findOwnedVersion,
+  findOwnedVersions,
+  findOwnedWidget,
+  listOwnedWidgets,
+  markPlatformInstanceRemoved,
+  markWidgetInstanceRemoved,
+  ownsGenerationRun,
+  publishWidgetVersion,
+  updateOwnedWidget,
+  upsertWidgetInstance,
+} from "../../repositories/widgets.repository.js";
 import { type WidgetSpec } from "../../spec/widget-spec.js";
 
 /**
@@ -33,105 +49,92 @@ export type WidgetView = {
 type WidgetRow = {
   id: string;
   name: string;
-  status: WidgetView["status"];
-  current_version_id: string | null;
-  created_at: Date;
-  updated_at: Date;
+  status: string;
+  currentVersionId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 };
 type VersionRow = {
   id: string;
-  version_number: number;
-  schema_version: number;
-  source: VersionSource;
-  spec_json: WidgetSpec;
-  created_at: Date;
+  versionNumber: number;
+  schemaVersion: number;
+  source: string;
+  specJson: unknown;
+  createdAt: Date;
 };
 
 const iso = (d: Date) => new Date(d).toISOString();
 const toVersion = (r: VersionRow): VersionView => ({
   id: r.id,
-  versionNumber: r.version_number,
-  schemaVersion: r.schema_version,
-  source: r.source,
-  spec: r.spec_json,
-  createdAt: iso(r.created_at),
+  versionNumber: r.versionNumber,
+  schemaVersion: r.schemaVersion,
+  source: r.source as VersionSource,
+  spec: r.specJson as WidgetSpec,
+  createdAt: iso(r.createdAt),
 });
 
-async function latestVersion(db: Db, widgetId: string): Promise<VersionView | null> {
-  const row = (
-    await db.query<VersionRow>(
-      `SELECT id, version_number, schema_version, source, spec_json, created_at
-       FROM widget_versions WHERE widget_id = $1 ORDER BY version_number DESC LIMIT 1`,
-      [widgetId],
-    )
-  ).rows[0];
+async function latestVersion(db: PrismaClient, widgetId: string): Promise<VersionView | null> {
+  const row = await findLatestVersion(db, widgetId);
   return row ? toVersion(row) : null;
 }
 
-async function ownedWidget(db: Db, userId: string, widgetId: string): Promise<WidgetRow> {
-  const row = (
-    await db.query<WidgetRow>(
-      "SELECT id, name, status, current_version_id, created_at, updated_at FROM widgets WHERE id = $1 AND user_id = $2",
-      [widgetId, userId],
-    )
-  ).rows[0];
+async function ownedWidget(db: PrismaClient, userId: string, widgetId: string): Promise<WidgetRow> {
+  const row = await findOwnedWidget(db, userId, widgetId);
   if (!row) throw notFound("Widget");
   return row;
 }
 
-async function view(db: Db, row: WidgetRow): Promise<WidgetView> {
+async function view(db: PrismaClient, row: WidgetRow): Promise<WidgetView> {
   return {
     id: row.id,
     name: row.name,
-    status: row.status,
-    currentVersionId: row.current_version_id,
+    status: row.status as WidgetView["status"],
+    currentVersionId: row.currentVersionId,
     latestVersion: await latestVersion(db, row.id),
-    createdAt: iso(row.created_at),
-    updatedAt: iso(row.updated_at),
+    createdAt: iso(row.createdAt),
+    updatedAt: iso(row.updatedAt),
   };
 }
 
-export async function listWidgets(db: Db, userId: string, includeArchived: boolean): Promise<WidgetView[]> {
-  const { rows } = await db.query<WidgetRow>(
-    `SELECT id, name, status, current_version_id, created_at, updated_at FROM widgets
-     WHERE user_id = $1 AND ($2 OR status <> 'archived') ORDER BY updated_at DESC LIMIT 200`,
-    [userId, includeArchived],
-  );
-  return Promise.all(rows.map((r) => view(db, r)));
+export async function listWidgets(db: PrismaClient, userId: string, includeArchived: boolean): Promise<WidgetView[]> {
+  const rows = await listOwnedWidgets(db, userId, includeArchived);
+  return Promise.all(rows.map((row) => view(db, row)));
 }
 
-export async function getWidget(db: Db, userId: string, widgetId: string): Promise<WidgetView> {
+export async function getWidget(db: PrismaClient, userId: string, widgetId: string): Promise<WidgetView> {
   return view(db, await ownedWidget(db, userId, widgetId));
 }
 
 /** Verifies a generation run belongs to the user before a version links to it. */
-async function checkRun(db: Db, userId: string, runId: string | undefined): Promise<string | null> {
+async function checkRun(db: PrismaClient, userId: string, runId: string | undefined): Promise<string | null> {
   if (!runId) return null;
-  const owned = (await db.query("SELECT 1 FROM generation_runs WHERE id = $1 AND user_id = $2", [runId, userId])).rows.length > 0;
+  const owned = await ownsGenerationRun(db, userId, runId);
   if (!owned) throw new HttpError(400, "INVALID_REQUEST", "generationRunId does not belong to this user.");
   return runId;
 }
 
 export async function createWidget(
-  db: Db,
+  db: PrismaClient,
   userId: string,
   input: { spec: WidgetSpec; generationRunId?: string },
 ): Promise<WidgetView> {
   const runId = await checkRun(db, userId, input.generationRunId);
   const id = randomUUID();
-  await db.transaction(async (tx) => {
-    await tx.query("INSERT INTO widgets (id, user_id, name) VALUES ($1, $2, $3)", [id, userId, input.spec.name]);
-    await tx.query(
-      `INSERT INTO widget_versions (id, widget_id, version_number, schema_version, spec_json, source, generation_run_id)
-       VALUES ($1, $2, 1, $3, $4::jsonb, $5, $6)`,
-      [randomUUID(), id, input.spec.schemaVersion, json(input.spec), runId ? "generated" : "manual", runId],
-    );
+  await createWidgetWithFirstVersion(db, {
+    widgetId: id,
+    versionId: randomUUID(),
+    userId,
+    name: input.spec.name,
+    schemaVersion: input.spec.schemaVersion,
+    spec: input.spec,
+    source: runId ? "generated" : "manual",
+    generationRunId: runId,
   });
   return getWidget(db, userId, id);
 }
 
 export async function addVersion(
-  db: Db,
+  db: PrismaClient,
   userId: string,
   widgetId: string,
   input: { spec: WidgetSpec; generationRunId?: string },
@@ -139,118 +142,81 @@ export async function addVersion(
   await ownedWidget(db, userId, widgetId);
   const runId = await checkRun(db, userId, input.generationRunId);
   const versionId = randomUUID();
-  await db.transaction(async (tx) => {
-    // Lock the widget so two concurrent saves cannot take the same version number.
-    await tx.query("SELECT 1 FROM widgets WHERE id = $1 FOR UPDATE", [widgetId]);
-    await tx.query(
-      `INSERT INTO widget_versions (id, widget_id, version_number, schema_version, spec_json, source, generation_run_id)
-       SELECT $1, $2, COALESCE(MAX(version_number), 0) + 1, $3, $4::jsonb, $5, $6 FROM widget_versions WHERE widget_id = $2`,
-      [versionId, widgetId, input.spec.schemaVersion, json(input.spec), runId ? "edited" : "manual", runId],
-    );
-    await tx.query("UPDATE widgets SET updated_at = now() WHERE id = $1", [widgetId]);
+  await addWidgetVersion(db, {
+    widgetId,
+    versionId,
+    schemaVersion: input.spec.schemaVersion,
+    spec: input.spec,
+    source: runId ? "edited" : "manual",
+    generationRunId: runId,
   });
   return (await getVersion(db, userId, widgetId, versionId))!;
 }
 
-export async function listVersions(db: Db, userId: string, widgetId: string): Promise<VersionView[]> {
+export async function listVersions(db: PrismaClient, userId: string, widgetId: string): Promise<VersionView[]> {
   await ownedWidget(db, userId, widgetId);
-  const { rows } = await db.query<VersionRow>(
-    `SELECT id, version_number, schema_version, source, spec_json, created_at
-     FROM widget_versions WHERE widget_id = $1 ORDER BY version_number DESC`,
-    [widgetId],
-  );
-  return rows.map(toVersion);
+  const rows = await findOwnedVersions(db, userId, widgetId);
+  return rows.map((row) => toVersion(row));
 }
 
-export async function getVersion(db: Db, userId: string, widgetId: string, versionId: string): Promise<VersionView | null> {
-  const row = (
-    await db.query<VersionRow>(
-      `SELECT v.id, v.version_number, v.schema_version, v.source, v.spec_json, v.created_at
-       FROM widget_versions v JOIN widgets w ON w.id = v.widget_id
-       WHERE v.id = $1 AND v.widget_id = $2 AND w.user_id = $3`,
-      [versionId, widgetId, userId],
-    )
-  ).rows[0];
+export async function getVersion(db: PrismaClient, userId: string, widgetId: string, versionId: string): Promise<VersionView | null> {
+  const row = await findOwnedVersion(db, userId, widgetId, versionId);
   return row ? toVersion(row) : null;
 }
 
 /** Makes a version the one devices render. Publishing an older version is a rollback. */
-export async function publish(db: Db, userId: string, widgetId: string, versionId: string): Promise<WidgetView> {
+export async function publish(db: PrismaClient, userId: string, widgetId: string, versionId: string): Promise<WidgetView> {
   const row = await ownedWidget(db, userId, widgetId);
   if (row.status === "archived") throw new HttpError(409, "WIDGET_ARCHIVED", "Unarchive the widget before publishing it.");
   const version = await getVersion(db, userId, widgetId, versionId);
   if (!version) throw notFound("Version");
-  await db.query(
-    "UPDATE widgets SET current_version_id = $2, status = 'published', name = $3, updated_at = now() WHERE id = $1",
-    [widgetId, versionId, version.spec.name],
-  );
+  await publishWidgetVersion(db, userId, widgetId, versionId, version.spec.name);
   return getWidget(db, userId, widgetId);
 }
 
 export async function updateWidget(
-  db: Db,
+  db: PrismaClient,
   userId: string,
   widgetId: string,
   patch: { name?: string; archived?: boolean },
 ): Promise<WidgetView> {
   const row = await ownedWidget(db, userId, widgetId);
-  const status = patch.archived === undefined ? row.status : patch.archived ? "archived" : row.current_version_id ? "published" : "draft";
-  await db.query("UPDATE widgets SET name = $2, status = $3, updated_at = now() WHERE id = $1", [
-    widgetId,
-    patch.name ?? row.name,
-    status,
-  ]);
+  const status = patch.archived === undefined ? row.status : patch.archived ? "archived" : row.currentVersionId ? "published" : "draft";
+  await updateOwnedWidget(db, userId, widgetId, { name: patch.name ?? row.name, status });
   return getWidget(db, userId, widgetId);
 }
 
-export async function deleteWidget(db: Db, userId: string, widgetId: string): Promise<void> {
+export async function deleteWidget(db: PrismaClient, userId: string, widgetId: string): Promise<void> {
   await ownedWidget(db, userId, widgetId);
-  await db.query("DELETE FROM widgets WHERE id = $1 AND user_id = $2", [widgetId, userId]);
+  await deleteOwnedWidget(db, userId, widgetId);
 }
 
 export type InstanceView = { id: string; deviceId: string; platformWidgetId: number; renderer: string; createdAt: string };
 
 /** Records a home-screen placement so the server knows which widgets are live where. */
 export async function registerInstance(
-  db: Db,
+  db: PrismaClient,
   userId: string,
   widgetId: string,
   input: { deviceId: string; platformWidgetId: number; renderer: string },
 ): Promise<InstanceView> {
   await ownedWidget(db, userId, widgetId);
-  const id = randomUUID();
-  const row = (
-    await db.query<{ id: string; created_at: Date }>(
-      `INSERT INTO widget_instances (id, widget_id, user_id, device_id, platform_widget_id, renderer)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (user_id, device_id, platform_widget_id)
-       DO UPDATE SET widget_id = EXCLUDED.widget_id, renderer = EXCLUDED.renderer, status = 'active'
-       RETURNING id, created_at`,
-      [id, widgetId, userId, input.deviceId, input.platformWidgetId, input.renderer],
-    )
-  ).rows[0];
-  return { id: row.id, ...input, createdAt: iso(row.created_at) };
+  const row = await upsertWidgetInstance(db, { widgetId, userId, ...input });
+  return { id: row.id, ...input, createdAt: iso(row.createdAt) };
 }
 
-export async function removeInstance(db: Db, userId: string, widgetId: string, instanceId: string): Promise<void> {
-  const { rows } = await db.query(
-    "UPDATE widget_instances SET status = 'removed' WHERE id = $1 AND widget_id = $2 AND user_id = $3 RETURNING id",
-    [instanceId, widgetId, userId],
-  );
-  if (rows.length === 0) throw notFound("Instance");
+export async function removeInstance(db: PrismaClient, userId: string, widgetId: string, instanceId: string): Promise<void> {
+  const result = await markWidgetInstanceRemoved(db, { id: instanceId, widgetId, userId });
+  if (result.count === 0) throw notFound("Instance");
 }
 
 /** Idempotently marks a launcher placement removed using its app-install identity. */
 export async function removeInstanceByPlatform(
-  db: Db,
+  db: PrismaClient,
   userId: string,
   widgetId: string,
   input: { deviceId: string; platformWidgetId: number },
 ): Promise<void> {
   await ownedWidget(db, userId, widgetId);
-  await db.query(
-    `UPDATE widget_instances SET status = 'removed'
-     WHERE widget_id = $1 AND user_id = $2 AND device_id = $3 AND platform_widget_id = $4 AND status <> 'removed'`,
-    [widgetId, userId, input.deviceId, input.platformWidgetId],
-  );
+  await markPlatformInstanceRemoved(db, { widgetId, userId, ...input });
 }

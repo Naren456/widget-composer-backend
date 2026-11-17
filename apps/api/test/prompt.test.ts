@@ -132,7 +132,7 @@ test("news intents use live story feeds rather than generic page snapshots", () 
 test("generation uses existing widget context to accept a short edit", async () => {
   const db = await testDb();
   const userId = "00000000-0000-4000-8000-000000000004";
-  await db.query("INSERT INTO users (id) VALUES ($1)", [userId]);
+  await db.user.create({ data: { id: userId } });
   const palette = { background: "#101820", surface: "#1C2732", text: "#F4F7FA", muted: "#ABB8C4", accent: "#F4A261", border: "#34424F" };
   const base: WidgetSpec = {
     schemaVersion: 7,
@@ -198,7 +198,7 @@ test("generation uses existing widget context to accept a short edit", async () 
 test("generation fixes the prompt first and normalizes wrapped image bindings and detached nodes", async () => {
   const db = await testDb();
   const userId = "00000000-0000-4000-8000-000000000001";
-  await db.query("INSERT INTO users (id) VALUES ($1)", [userId]);
+  await db.user.create({ data: { id: userId } });
   const order: string[] = [];
   const draft: FlatSpec = {
     unsupported: null,
@@ -253,7 +253,7 @@ test("generation fixes the prompt first and normalizes wrapped image bindings an
 test("generation normalizes nested battery nodes and drops non-connector data-source labels", async () => {
   const db = await testDb();
   const userId = "00000000-0000-4000-8000-000000000002";
-  await db.query("INSERT INTO users (id) VALUES ($1)", [userId]);
+  await db.user.create({ data: { id: userId } });
   const nestedDraft = {
     unsupported: null,
     name: "Battery meter",

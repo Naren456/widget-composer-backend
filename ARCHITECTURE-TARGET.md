@@ -23,7 +23,7 @@ No product or infrastructure change in this proposal should be implemented befor
 
 ### Verified in the repositories
 
-- Backend: Express 5 and TypeScript, PostgreSQL through `pg`, Zod, an API-owned anonymous-device session system, and Composio-backed GitHub access. LLM adapters include Anthropic, OpenRouter, and Google Gemini. Optional image generation uses OpenAI or a Playwright/ChatGPT browser profile; web research uses self-hosted SearXNG.
+- Backend: Express 5 and TypeScript, PostgreSQL through Prisma ORM, Zod, an API-owned anonymous-device session system, and Composio-backed GitHub access. LLM adapters include Anthropic, OpenRouter, and Google Gemini; web research uses self-hosted SearXNG.
 - App: Expo SDK 58, React Native 0.88, Expo Router, and a custom Kotlin Expo module. The Android widget renderer is Jetpack Glance with a legacy `RemoteViews` fallback.
 - The backend validates a fixed, declarative `WidgetSpec` (currently schema version 7); model output is converted from a flat graph to a bounded tree. The component and provider catalogs are allowlisted. Specs do not contain executable code or credentials.
 - Current providers are GitHub queries, public HTTPS website pages, RSS/Atom news, Android device metrics, and the device-local clock. Android-only values are read on-device.

@@ -1,0 +1,134 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String             @id @db.Uuid
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+  refreshTokens  RefreshToken[]
+  generationRuns GenerationRun[]
+  widgets        Widget[]
+  instances      WidgetInstance[]
+  imageAssets    WidgetImageAsset[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  tokenHash String    @id @map("token_hash")
+  userId    String    @map("user_id") @db.Uuid
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "refresh_tokens_user")
+  @@map("refresh_tokens")
+}
+
+model GenerationRun {
+  id             String          @id @db.Uuid
+  userId         String          @map("user_id") @db.Uuid
+  model          String
+  status         String
+  errorCode      String?         @map("error_code")
+  attempts       Int
+  latencyMs      Int             @map("latency_ms")
+  inputTokens    Int             @default(0) @map("input_tokens")
+  outputTokens   Int             @default(0) @map("output_tokens")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  widgetVersions WidgetVersion[]
+
+  @@index([userId, createdAt(sort: Desc)], map: "generation_runs_user")
+  @@map("generation_runs")
+}
+
+model Widget {
+  id               String           @id @db.Uuid
+  userId           String           @map("user_id") @db.Uuid
+  name             String
+  status           String           @default("draft")
+  currentVersionId String?          @map("current_version_id") @db.Uuid
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @default(now()) @map("updated_at") @db.Timestamptz(6)
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  versions         WidgetVersion[]  @relation("WidgetVersions")
+  currentVersion   WidgetVersion?   @relation("WidgetCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  instances        WidgetInstance[]
+  snapshot         WidgetSnapshot?
+
+  @@index([userId, updatedAt(sort: Desc)], map: "widgets_user")
+  @@map("widgets")
+}
+
+model WidgetVersion {
+  id              String           @id @db.Uuid
+  widgetId        String           @map("widget_id") @db.Uuid
+  versionNumber   Int              @map("version_number")
+  schemaVersion   Int              @map("schema_version")
+  specJson        Json             @map("spec_json") @db.JsonB
+  source          String
+  generationRunId String?          @map("generation_run_id") @db.Uuid
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  widget          Widget           @relation("WidgetVersions", fields: [widgetId], references: [id], onDelete: Cascade)
+  currentFor      Widget[]         @relation("WidgetCurrentVersion")
+  generationRun   GenerationRun?   @relation(fields: [generationRunId], references: [id], onDelete: SetNull)
+  snapshots       WidgetSnapshot[]
+
+  @@unique([widgetId, versionNumber])
+  @@map("widget_versions")
+}
+
+model WidgetInstance {
+  id               String   @id @db.Uuid
+  widgetId         String   @map("widget_id") @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  deviceId         String   @map("device_id")
+  platformWidgetId Int      @map("platform_widget_id")
+  renderer         String
+  status           String   @default("active")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  widget           Widget   @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId, platformWidgetId])
+  @@index([widgetId], map: "widget_instances_widget")
+  @@map("widget_instances")
+}
+
+model WidgetSnapshot {
+  widgetId      String        @id @map("widget_id") @db.Uuid
+  versionId     String        @map("version_id") @db.Uuid
+  dataJson      Json?         @map("data_json") @db.JsonB
+  fetchedAt     DateTime?     @map("fetched_at") @db.Timestamptz(6)
+  lastAttemptAt DateTime      @map("last_attempt_at") @db.Timestamptz(6)
+  lastError     String?       @map("last_error")
+  widget        Widget        @relation(fields: [widgetId], references: [id], onDelete: Cascade)
+  version       WidgetVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@map("widget_snapshots")
+}
+
+model WidgetImageAsset {
+  id        String    @id @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  mediaType String    @map("media_type")
+  imageData Bytes     @map("image_data")
+  expiresAt DateTime? @default(dbgenerated("(now() + interval '1 day')")) @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  prompt    String    @default("")
+  model     String    @default("")
+  style     String    @default("abstract")
+  width     Int?
+  height    Int?
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt], map: "widget_image_assets_expiry")
+  @@map("widget_image_assets")
+}

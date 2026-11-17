@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { type NextFunction, type Request, type Response } from "express";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
-import { type Db } from "../../db/db.js";
+import {
+  createRefreshToken,
+  createUser,
+  findRefreshToken,
+  revokeRefreshToken,
+  revokeUserRefreshTokens,
+} from "../../repositories/auth.repository.js";
 import { randomToken, safeEqual, sha256, sign } from "../../lib/crypto.js";
 import { HttpError } from "../../lib/errors.js";
 
@@ -38,39 +45,38 @@ export function verifyAccessToken(secret: Buffer, token: string, now = Date.now(
   return parts[1];
 }
 
-async function newSession(db: Db, secret: Buffer, userId: string): Promise<Session> {
+async function newSession(db: PrismaClient | Prisma.TransactionClient, secret: Buffer, userId: string): Promise<Session> {
   const refreshToken = randomToken();
-  await db.query("INSERT INTO refresh_tokens (token_hash, user_id, expires_at) VALUES ($1, $2, $3)", [
-    sha256(refreshToken),
+  await createRefreshToken(db, {
+    tokenHash: sha256(refreshToken),
     userId,
-    new Date(Date.now() + REFRESH_TTL_MS),
-  ]);
+    expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+  });
   return { accessToken: issueAccessToken(secret, userId), expiresIn: ACCESS_TTL_S, refreshToken, userId };
 }
 
-export async function createDeviceUser(db: Db, secret: Buffer): Promise<Session> {
+export async function createDeviceUser(db: PrismaClient, secret: Buffer): Promise<Session> {
   const userId = randomUUID();
-  await db.query("INSERT INTO users (id) VALUES ($1)", [userId]);
+  await createUser(db, userId);
   return newSession(db, secret, userId);
 }
 
-export async function refreshSession(db: Db, secret: Buffer, refreshToken: string): Promise<Session> {
+export async function refreshSession(db: PrismaClient, secret: Buffer, refreshToken: string): Promise<Session> {
   const hash = sha256(refreshToken);
-  const result = await db.transaction(async (tx) => {
-    const row = (
-      await tx.query<{ user_id: string; expires_at: Date; revoked_at: Date | null }>(
-        "SELECT user_id, expires_at, revoked_at FROM refresh_tokens WHERE token_hash = $1 FOR UPDATE",
-        [hash],
-      )
-    ).rows[0];
+  const result = await db.$transaction(async (tx) => {
+    const row = await findRefreshToken(tx, hash);
     if (!row) return null;
-    if (row.revoked_at) {
-      await tx.query("UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL", [row.user_id]);
+    if (row.revokedAt) {
+      await revokeUserRefreshTokens(tx, row.userId, new Date());
       return { reused: true as const };
     }
-    if (new Date(row.expires_at).getTime() <= Date.now()) return null;
-    await tx.query("UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1", [hash]);
-    return { userId: row.user_id };
+    if (row.expiresAt.getTime() <= Date.now()) return null;
+    const revoked = await revokeRefreshToken(tx, hash, new Date());
+    if (revoked.count === 0) {
+      await revokeUserRefreshTokens(tx, row.userId, new Date());
+      return { reused: true as const };
+    }
+    return { userId: row.userId };
   });
 
   if (!result) throw new HttpError(401, "INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired.");

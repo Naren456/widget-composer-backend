@@ -6,7 +6,7 @@ export const COMPONENT_CATALOG = [
   { type: "column", description: "Vertical container; children are drawn top to bottom. Can draw a padded rounded card using the palette surface color.", properties: ["gap", "surface", "radiusDp", "paddingDp", "children"] },
   { type: "row", description: "Horizontal container; children are drawn left to right. Can draw a padded rounded card using the palette surface color.", properties: ["gap", "surface", "radiusDp", "paddingDp", "children"] },
   { type: "text", description: "Static or data-bound text with hierarchy, explicit size, weight, and palette color token.", properties: ["text", "style", "fontSizeDp", "weight", "colorToken"] },
-  { type: "image", description: "Website image, explicitly attached image, or original generated illustration. For an original illustration use source=generate_image, imagePrompt for detailed subject/composition/style/palette/lighting, and a short accessible alt; use widthDp/heightDp for a prominent hero image.", properties: ["source", "alt", "imagePrompt", "widthDp", "heightDp", "fit", "radiusDp"] },
+  { type: "image", description: "Website image or explicitly attached image. Use a short accessible alt and widthDp/heightDp for a compact hero image.", properties: ["source", "alt", "imagePrompt", "widthDp", "heightDp", "fit", "radiusDp"] },
   { type: "link", description: "Short clickable label that opens a connector-provided HTTPS URL binding.", properties: ["label", "urlBinding"] },
   { type: "clock", description: "Device-local time with 12_hour or 24_hour format and optional date and seconds.", properties: ["format", "showDate", "showSeconds"] },
   { type: "metric", description: "One large value from a valid binding with a short label.", properties: ["label", "valueBinding"] },

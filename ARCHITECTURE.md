@@ -29,17 +29,17 @@ flowchart LR
 
 ### Backend and storage
 
-- The API is Express 5 + TypeScript, with Zod validation and PostgreSQL through `pg`.
+- The API is Express 5 + TypeScript, with Zod validation and PostgreSQL through Prisma ORM.
 - Authentication is currently anonymous per device, using API-issued access and rotating refresh tokens. It is not Supabase Auth.
-- PostgreSQL stores widget specs and versions, device/widget instance mappings, refresh snapshots, generation runs, and user-owned image assets. The image-studio route uses NVIDIA Build FLUX.2 Klein 4B when configured; provider credentials remain server-side. There is no Supabase Storage or Redis dependency.
+- PostgreSQL stores widget specs and versions, device/widget instance mappings, refresh snapshots, generation runs, and user-owned image assets. Provider credentials remain server-side. There is no Supabase Storage or Redis dependency.
 - Ownership is enforced by API queries scoped to `user_id`; PostgreSQL Row Level Security is not configured. The database is intended to be accessed by the API, not directly by mobile clients.
 - Rate-limit counters are in memory. They are suitable for one API process, not coordinated across replicas.
 
 ### Generation and widget contract
 
 - The backend owns the authoritative Zod spec validation and flat JSON Schema used for structured generation. The model returns a flat node list; the backend reconstructs the tree, validates bindings and limits, and may request bounded repairs.
-- Image Studio stores generated images as durable user-owned assets and returns authenticated metadata/image retrieval. Images are normalized to JPEG and capped at 512 KB for widget transport; WidgetSpec v9 can reference an asset as a background.
-- Role prompts are composed into the generation prompt. Research, website reading, image generation, and validation are backend capabilities; this is not a collection of independently running agents making arbitrary tool calls.
+- User-owned image assets are stored and returned through authenticated metadata/image retrieval. Images are normalized to JPEG and capped at 512 KB for widget transport; WidgetSpec v9 can reference an asset as a background.
+- Role prompts are composed into the generation prompt. Research, website reading, and validation are backend capabilities; this is not a collection of independently running agents making arbitrary tool calls.
 - Backend TypeScript, app TypeScript, and Kotlin each encode parts of the widget contract. They currently agree by convention, not by importing one generated shared package. This creates a schema-drift risk.
 - The renderer uses a fixed component registry and data bindings. Specs cannot include executable code. `open_url` targets must resolve to connector-provided URLs.
 

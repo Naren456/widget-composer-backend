@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { type PrismaClient } from "@prisma/client";
 
-import { type Db } from "../../db/db.js";
 import { HttpError } from "../../lib/errors.js";
+import {
+  createTemporaryImageAsset,
+  deleteExpiredImageAssets,
+  findAvailableImageAssets,
+  retainOwnedImageAssets,
+} from "../../repositories/image-assets.repository.js";
 import { type WidgetNode, type WidgetSpec } from "../../spec/widget-spec.js";
 import { type SourceData } from "../connectors/github.js";
 
@@ -17,40 +23,30 @@ export function imageAssetIds(node: WidgetNode, found = new Set<string>()): Set<
   return found;
 }
 
-export async function storeWidgetImage(db: Db, userId: string, mediaType: string, base64: string): Promise<string> {
-  await db.query("DELETE FROM widget_image_assets WHERE expires_at <= now()");
+export async function storeWidgetImage(db: PrismaClient, userId: string, mediaType: string, base64: string): Promise<string> {
+  await deleteExpiredImageAssets(db);
   const id = randomUUID();
-  await db.query(
-    "INSERT INTO widget_image_assets (id, user_id, media_type, image_data) VALUES ($1, $2, $3, $4)",
-    [id, userId, mediaType, Buffer.from(base64, "base64")],
-  );
+  await createTemporaryImageAsset(db, { id, userId, mediaType, imageData: Buffer.from(base64, "base64") });
   return `asset_${id}`;
 }
 
 /** Validates ownership when an asset-bearing spec is saved and makes it durable. */
-export async function retainSpecImages(db: Db, userId: string, spec: WidgetSpec): Promise<void> {
+export async function retainSpecImages(db: PrismaClient, userId: string, spec: WidgetSpec): Promise<void> {
   const ids = imageAssetIds(spec.root);
   if (spec.presentation.backgroundImageAssetId) ids.add(spec.presentation.backgroundImageAssetId);
-  for (const id of ids) {
-    const result = await db.query(
-      "UPDATE widget_image_assets SET expires_at = NULL WHERE id = $1 AND user_id = $2 AND (expires_at IS NULL OR expires_at > now()) RETURNING id",
-      [id, userId],
-    );
-    if (result.rows.length === 0) throw new HttpError(422, "IMAGE_ASSET_UNAVAILABLE", "An attached widget image expired or does not belong to this account. Attach it again.");
-  }
+  if (!ids.size) return;
+  const updated = await retainOwnedImageAssets(db, userId, [...ids]);
+  if (updated.count !== ids.size) throw new HttpError(422, "IMAGE_ASSET_UNAVAILABLE", "An attached widget image expired or does not belong to this account. Attach it again.");
 }
 
 /** Resolves only unexpired or saved assets owned by the current account. */
-export async function loadSpecImages(db: Db, userId: string, spec: WidgetSpec): Promise<Record<string, SourceData>> {
+export async function loadSpecImages(db: PrismaClient, userId: string, spec: WidgetSpec): Promise<Record<string, SourceData>> {
   const ids = [...imageAssetIds(spec.root)];
   if (spec.presentation.backgroundImageAssetId && !ids.includes(spec.presentation.backgroundImageAssetId)) {
     ids.push(spec.presentation.backgroundImageAssetId);
   }
   if (!ids.length) return {};
-  const { rows } = await db.query<{ id: string; media_type: string; image_data: Buffer | Uint8Array }>(
-    "SELECT id, media_type, image_data FROM widget_image_assets WHERE id = ANY($1::uuid[]) AND user_id = $2 AND (expires_at IS NULL OR expires_at > now())",
-    [ids, userId],
-  );
+  const rows = await findAvailableImageAssets(db, userId, ids);
   const found = new Map(rows.map((row) => [row.id, row]));
   const data: Record<string, SourceData> = {};
   for (const id of ids) {
@@ -58,7 +54,7 @@ export async function loadSpecImages(db: Db, userId: string, spec: WidgetSpec): 
     if (!row) throw new HttpError(422, "IMAGE_ASSET_UNAVAILABLE", "An attached widget image expired or is unavailable. Edit the widget and attach it again.");
     data[`asset_${id}`] = {
       count: 1,
-      items: [{ title: "Attached image", url: "", repo: "", number: 0, author: "", updatedAt: "", imageUrl: "", imageData: Buffer.from(row.image_data).toString("base64"), imageMimeType: row.media_type }],
+      items: [{ title: "Attached image", url: "", repo: "", number: 0, author: "", updatedAt: "", imageUrl: "", imageData: Buffer.from(row.imageData).toString("base64"), imageMimeType: row.mediaType }],
     };
   }
   return data;

@@ -79,7 +79,7 @@ test("flat output converts to a tree and back", () => {
   assert.ok(spec.ok);
   const tree = toTree(toFlat(spec.spec));
   assert.ok(tree.ok);
-  assert.equal(tree.spec.schemaVersion, 8);
+  assert.equal(tree.spec.schemaVersion, 9);
   assert.equal(tree.spec.name, spec.spec.name);
   assert.deepEqual(tree.spec.dataSources, spec.spec.dataSources);
   assert.deepEqual(tree.spec.root, spec.spec.root);

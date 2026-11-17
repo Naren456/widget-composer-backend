@@ -24,7 +24,6 @@ export function buildApp(deps: Deps) {
   app.use(cors(deps.config.CORS_ORIGINS));
   // Only widget generation accepts a reference image; keep other JSON endpoints small.
   app.use("/v1/widgets/generate", express.json({ limit: "5mb" }));
-  app.use("/v1/image-generation/generate", express.json({ limit: "5mb" }));
   app.use(express.json({ limit: "64kb" }));
 
   app.use(routes(deps));

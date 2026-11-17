@@ -41,16 +41,6 @@ const schema = z.object({
 
   ANTHROPIC_API_KEY: z.string().optional(),
   ANTHROPIC_MODEL: z.string().default("claude-opus-5-5"),
-  /** Optional image generation provider; widget generation works without it when no artwork is requested. */
-  OPENAI_API_KEY: z.string().optional(),
-  OPENAI_IMAGE_MODEL: z.string().default("gpt-image-2.5-sunburst"),
-  NVIDIA_API_KEY: z.string().optional(),
-  NVIDIA_IMAGE_MODEL: z.string().default("flux.2-klein-4b"),
-  NVIDIA_IMAGE_API_URL: z.url().refine((url) => new URL(url).protocol === "https:", "must use HTTPS").default("https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b"),
-  IMAGE_GENERATION_PROVIDER: z.enum(["nvidia", "openai", "playwright_chatgpt"]).optional(),
-  PLAYWRIGHT_USER_DATA_DIR: z.string().default(".local/chatgpt-image-profile"),
-  PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: z.string().default("/usr/bin/google-chrome"),
-  PLAYWRIGHT_IMAGE_LIMIT_PER_HOUR: z.coerce.number().int().min(1).max(100).default(6),
   /** Provider used for widget generation. */
   LLM_PROVIDER: z.enum(["anthropic", "openrouter", "google"]).optional(),
   OPENROUTER_API_KEY: z.string().optional(),
@@ -85,7 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
 export const composioConfigured = (c: Config) => Boolean(c.COMPOSIO_API_KEY);
 export const selectedLlmProvider = (c: Config) => c.LLM_PROVIDER ?? (c.OPENROUTER_API_KEY ? "openrouter" : c.GEMINI_API_KEY ? "google" : "anthropic");
-export const selectedImageProvider = (c: Config) => c.IMAGE_GENERATION_PROVIDER ?? (c.NVIDIA_API_KEY ? "nvidia" : c.OPENAI_API_KEY ? "openai" : "playwright_chatgpt");
+
 export const llmConfigured = (c: Config) => {
   switch (selectedLlmProvider(c)) {
     case "openrouter": return Boolean(c.OPENROUTER_API_KEY);

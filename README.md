@@ -4,7 +4,7 @@ Backend for the WidgetComposer app: turns a prompt into a validated widget spec,
 stores widgets with immutable versions, connects GitHub through Composio, and serves
 cached widget data. All Composio code and keys live here; the app only calls this API.
 
-Express 5 · TypeScript · Zod · PostgreSQL · Claude (structured outputs) · Composio.
+Express 5 · TypeScript · Prisma ORM · PostgreSQL · Zod · Claude (structured outputs) · Composio.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation, planned gaps,
 and scale-up decisions. The pasted reference architecture is treated as a target, not
@@ -37,31 +37,42 @@ docker compose up -d db          # Postgres on 127.0.0.1:5433
 cd apps/api
 cp .env.example .env             # fill SESSION_SECRET (32 random bytes)
 npm install
-npm run dev                      # migrates, then serves on :3000
-npm test                         # 24 tests on PGlite (in-process Postgres), no server needed
+npm run db:generate
+npm run db:migrate:deploy        # applies checked-in Prisma migrations
+npm run dev                      # serves on :3000
+npm test                         # tests run Prisma against PGlite (in-process Postgres), no server needed
 ```
 
+The Prisma schema is in `apps/api/prisma/schema.prisma`. The checked-in migration
+history is managed with Prisma Migrate; runtime reads and writes use Prisma Client
+model operations. For schema changes, update the schema and run
+`npm run db:migrate:dev -- --name describe_change`. Deployments should run
+`npm run db:migrate:deploy` before starting the API.
+
+The API source is organized by responsibility: `src/routes/` defines HTTP endpoints,
+`src/modules/` contains feature services and integrations, and `src/repositories/`
+contains persistence operations. `src/app.ts` and `src/server.ts` compose and start
+the application.
+
+Server-side data connectors share the typed adapter contract in
+`apps/api/src/modules/connectors/data-connector.ts`; adapters are registered in
+`data-connectors.ts`. Each adapter fetches the validated source into the shared
+`SourceData` response shape and can optionally provide connection-status checks and
+sample preview data. When adding a provider, implement this contract, register its
+adapter, and add its source/query to `src/spec/provider-catalog.ts`,
+`src/spec/widget-spec.ts`, and `src/spec/flat.ts`. Keep provider credentials and
+fetching in the backend; the mobile contract consumes normalized data only.
+
+If upgrading a database created by the previous API migration runner, first back it
+up and confirm its `schema_migrations` table contains `001_init` through
+`004_generated_image_assets`. Then, from `apps/api`, baseline the already-current
+schema once with `npx prisma migrate resolve --applied 0001_initial`, and run
+`npm run db:migrate:deploy`. This records the existing schema as the initial Prisma
+migration without recreating tables or changing data.
+
 `ANTHROPIC_API_KEY` and `COMPOSIO_API_KEY` are optional: without them, generation and
-GitHub connect answer 503 with a clear message, and previews use sample data. Set
-Set `NVIDIA_API_KEY` to enable the Image Studio, which uses NVIDIA Build's FLUX.2 Klein 4B
-endpoint by default. The key stays on the server. `NVIDIA_IMAGE_MODEL` and
-`NVIDIA_IMAGE_API_URL` select the provider model and HTTPS endpoint. When no NVIDIA key
-is configured, `OPENAI_API_KEY` enables the optional OpenAI Images provider; the
-Playwright/ChatGPT browser provider remains available as an explicit fallback. Set
-`IMAGE_GENERATION_PROVIDER` to override provider selection. Image Studio accepts
-square, portrait, and landscape requests, enhances prompts for widget-safe artwork, and
-supports reference-image editing with NVIDIA. Generated images are normalized to JPEG
-at no more than 512 KB, retained as user-owned assets, and supplied through the same
-preview and Android widget data path as other images. Each user can retain up to 50
-generated images and request at most three generations per minute per API process.
-To use the Playwright browser provider, set `IMAGE_GENERATION_PROVIDER=playwright_chatgpt`,
-set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` for the host, and run `npm run image:login`
-from `apps/api`. This opens ordinary Chrome (not automation-controlled) with a dedicated
-profile. Sign into ChatGPT and close that Chrome window, then restart the API. The API uses that profile only to submit image
-prompts and download results; credentials never enter API requests. The default shared
-browser limit is six images per hour (`PLAYWRIGHT_IMAGE_LIMIT_PER_HOUR`). Do not point
-it at your regular Chrome profile. Website thumbnails and user-uploaded images do not
-require either image provider.
+GitHub connect answer 503 with a clear message, and previews use sample data.
+Website thumbnails and user-uploaded images do not require any extra provider.
 Web research uses the local SearXNG service; no paid search API key is needed. Start it
 with `docker compose up -d searxng` and set `SEARXNG_URL=http://127.0.0.1:8080` in the
 API environment (the default). If the API runs inside Docker Compose, use
@@ -84,7 +95,6 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
 | POST | `/v1/widgets/generate` | `{ prompt, widgetId? }` → `{ spec, generationRunId }` (edit when `widgetId`) |
 | POST | `/v1/widgets/validate` | `{ spec, renderer? }` → `{ valid, issues }` |
 | POST | `/v1/widgets/preview-data` | `{ spec }` → live data, or sample data flagged `sample: true` |
-| POST | `/v1/image-generation/generate` | Generate and save widget artwork; returns metadata and an authenticated asset URL |
 | GET | `/v1/image-assets` | List the signed-in user's saved image assets |
 | GET/DELETE | `/v1/image-assets/:id` | Retrieve or delete an unused owned image asset |
 | GET/POST | `/v1/widgets` | List / create (version 1) |
@@ -121,8 +131,7 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
   Composio project key plus `read:user` on its GitHub OAuth config.
 - **Widget data** is cache-first: the last good snapshot is kept, and a failed refresh records
   `lastError` instead of replacing good data.
-- **Image Studio** uses NVIDIA FLUX.2 Klein 4B by default when configured. Images are
-  compressed and bounded for Android widget transport; saved asset IDs can be rendered
+- **Attached images** are compressed and bounded for Android widget transport; saved asset IDs can be rendered
   as image nodes or as a WidgetSpec v9 background while clocks, labels, and data remain native.
 - **News feeds** (`src/modules/widget-data/news.ts`) discover a linked RSS/Atom feed from a publisher URL, normalize story fields and thumbnails, and fall back to linked page headlines. News/headline generation uses this live-story provider when the model otherwise selects a generic website snapshot.
 - **Auth** is anonymous per device for now; a sign-in provider can attach to the same user rows.
