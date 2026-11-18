@@ -11,6 +11,7 @@ import { PrismaClient } from "@prisma/client";
 import { buildApp } from "../src/app.js";
 import { type Config, loadConfig } from "../src/config.js";
 import { type GitHubApi } from "../src/modules/connectors/connector.js";
+import { type ImageDescriber } from "../src/modules/generation/image-description.js";
 import { type LlmProvider, type LlmReply } from "../src/modules/generation/llm.js";
 
 process.env.NODE_ENV = "test";
@@ -133,6 +134,7 @@ export type TestServer = {
 
 export async function startServer(opts: {
   llm?: LlmProvider | null;
+  imageDescriber?: ImageDescriber | null;
   github?: GitHubApi;
   config?: Config;
 } = {}): Promise<TestServer> {
@@ -142,6 +144,7 @@ export async function startServer(opts: {
     db,
     config,
     llm: opts.llm ?? null,
+    imageDescriber: opts.imageDescriber ?? null,
     github: opts.github ?? emptyGitHub,
   });
   const server = app.listen(0);

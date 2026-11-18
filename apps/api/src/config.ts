@@ -46,6 +46,8 @@ const schema = z.object({
   LLM_PROVIDER: z.enum(["nvidia", "openrouter"]).optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("openrouter/free"),
+  /** Vision model that describes an attached reference image before generation. */
+  IMAGE_DESCRIBER_MODEL: z.string().default("nvidia/nemotron-3.5-super-vl:free"),
 
   /** Self-hosted SearXNG base URL; requires no vendor search API key. */
   SEARXNG_URL: z.url().default("http://127.0.0.1:8080"),
@@ -96,3 +98,27 @@ export function llmSettings(c: Config): LlmSettings | null {
 }
 
 export const llmConfigured = (c: Config) => llmSettings(c) !== null;
+
+/**
+ * Vision model used to read attached reference images. OpenRouter's free Nemotron VL
+ * needs no credits; NVIDIA's own endpoint is used when only an NVIDIA key exists.
+ */
+export function imageDescriberSettings(c: Config): LlmSettings | null {
+  if (c.OPENROUTER_API_KEY) {
+    return {
+      provider: "openrouter",
+      apiKey: c.OPENROUTER_API_KEY,
+      model: c.IMAGE_DESCRIBER_MODEL,
+      baseURL: "https://openrouter.ai/api/v1",
+      headers: { "HTTP-Referer": c.PUBLIC_API_URL, "X-Title": "WidgetComposer" },
+    };
+  }
+  return c.NVIDIA_API_KEY
+    ? {
+        provider: "nvidia",
+        apiKey: c.NVIDIA_API_KEY,
+        model: "nvidia/nemotron-3.5-super-vl-120b-a12b",
+        baseURL: "https://integrate.api.nvidia.com/v1",
+      }
+    : null;
+}

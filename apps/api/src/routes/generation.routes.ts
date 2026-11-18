@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { type Deps } from "../deps.js";
 import { HttpError, parse } from "../lib/errors.js";
+import { devLog } from "../lib/logger.js";
 import { currentUser } from "../modules/auth/auth.js";
 import { generateSpec } from "../modules/generation/service.js";
 import { reviewWidgetDesign } from "../modules/generation/design-review.js";
@@ -63,12 +64,29 @@ export function generationRoutes(deps: Deps): Router {
       base = widget.latestVersion?.spec;
     }
     const imageAssetId = body.image ? await storeWidgetImage(db, userId, body.image.mediaType, body.image.base64) : undefined;
+    let imageDescription: string | undefined;
+    if (body.image && deps.imageDescriber) {
+      const started = Date.now();
+      try {
+        imageDescription = (await deps.imageDescriber.describe(body.image)) || undefined;
+        devLog("generation", "reference image described", {
+          durationMs: Date.now() - started,
+          characters: imageDescription?.length ?? 0,
+        });
+      } catch (error) {
+        devLog("generation", "reference image description failed", {
+          durationMs: Date.now() - started,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const { spec, runId } = await generateSpec(db, deps.llm, {
       userId,
       prompt: body.prompt,
       base,
       searchBaseUrl: config.SEARXNG_URL,
       image: body.image,
+      imageDescription,
       imageAssetId,
     });
     res.json({ spec, generationRunId: runId });
