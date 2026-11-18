@@ -1,10 +1,11 @@
 import { type GITHUB_QUERIES } from "../../spec/widget-spec.js";
-import { ToolError, type ConnectorClient } from "./composio.js";
+import { ToolError, type GitHubApi } from "./connector.js";
+import { type ContributionCalendarPayload } from "./github-api.js";
 
 /**
- * The read-only GitHub queries a spec can name, run through Composio. Responses are
- * normalised into one small shape so specs bind to stable fields, and nothing GitHub
- * returns beyond those fields is stored or passed on.
+ * The read-only GitHub queries a spec can name, read from GitHub's public API for the
+ * username stored on the data source. Responses are normalised into one small shape so
+ * specs bind to stable fields, and nothing beyond those fields is stored or passed on.
  */
 
 export type GitHubQuery = (typeof GITHUB_QUERIES)[number];
@@ -53,15 +54,14 @@ export type GitHubContributionSummary = { total: number; currentStreak: number; 
 export type SourceData = { count: number; items: DataItem[]; metadata?: WebsiteMetadata; contributions?: GitHubContributionSummary };
 
 export const GITHUB_TOOLKIT = "github";
-const SEARCH_TOOL = "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS";
 const MAX_ITEMS = 10;
 const MAX_TITLE = 200;
 
-/** Search qualifiers per query; `@me` is the connected account. */
-const QUALIFIERS: Record<Exclude<GitHubQuery, "contribution_streak">, string> = {
-  assigned_issues: "is:issue is:open archived:false assignee:@me",
-  open_pull_requests: "is:pr is:open archived:false author:@me",
-  review_requests: "is:pr is:open archived:false review-requested:@me",
+/** Public search qualifiers per query; the username replaces the old `@me` identity. */
+const QUALIFIERS: Record<Exclude<GitHubQuery, "contribution_streak">, (username: string) => string> = {
+  assigned_issues: (username) => `is:issue is:open archived:false assignee:${username}`,
+  open_pull_requests: (username) => `is:pr is:open archived:false author:${username}`,
+  review_requests: (username) => `is:pr is:open archived:false review-requested:${username}`,
 };
 
 type SearchItem = {
@@ -74,30 +74,18 @@ type SearchItem = {
 };
 type SearchResult = { total_count?: unknown; items: SearchItem[] };
 
-/** Composio may wrap the GitHub response (e.g. under `data`), so look a few levels down for it. */
-function findSearch(value: unknown, depth = 0): SearchResult | null {
-  if (!value || typeof value !== "object" || depth > 3) return null;
-  const obj = value as Record<string, unknown>;
-  if (Array.isArray(obj.items)) return obj as SearchResult;
-  for (const child of Object.values(obj)) {
-    const found = findSearch(child, depth + 1);
-    if (found) return found;
-  }
-  return null;
+function asSearchResult(value: unknown): SearchResult {
+  if (!value || typeof value !== "object") throw new ToolError("GitHub returned an unreadable search response.", "upstream");
+  const body = value as Record<string, unknown>;
+  if (!Array.isArray(body.items)) throw new ToolError("GitHub returned an unreadable search response.", "upstream");
+  return body as SearchResult;
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 
-export async function runQuery(client: ConnectorClient, userId: string, query: GitHubQuery): Promise<SourceData> {
-  if (query === "contribution_streak") return runContributionQuery(client, userId);
-  const data = await client.execute(userId, SEARCH_TOOL, {
-    q: QUALIFIERS[query],
-    sort: "updated",
-    order: "desc",
-    per_page: MAX_ITEMS,
-    response_detail: "full",
-  });
-  const body = findSearch(data) ?? { total_count: 0, items: [] };
+export async function runQuery(github: GitHubApi, query: GitHubQuery, username: string): Promise<SourceData> {
+  if (query === "contribution_streak") return runContributionQuery(github, username);
+  const body = asSearchResult(await github.searchIssues(QUALIFIERS[query](username)));
   const items = body.items.slice(0, MAX_ITEMS).map((item) => {
     const url = str(item.html_url);
     return {
@@ -113,38 +101,15 @@ export async function runQuery(client: ConnectorClient, userId: string, query: G
   return { count: typeof body.total_count === "number" ? body.total_count : items.length, items };
 }
 
-function findContributionCalendar(value: unknown, depth = 0): Record<string, unknown> | null {
-  if (!value || typeof value !== "object" || depth > 5) return null;
-  const obj = value as Record<string, unknown>;
-  if (Array.isArray(obj.weeks) && typeof obj.totalContributions === "number") return obj;
-  for (const child of Object.values(obj)) {
-    const found = findContributionCalendar(child, depth + 1);
-    if (found) return found;
+async function runContributionQuery(github: GitHubApi, username: string): Promise<SourceData> {
+  const calendar = await github.contributionCalendar(username) as ContributionCalendarPayload;
+  if (!Array.isArray(calendar?.days) || !calendar.days.length) {
+    throw new ToolError("GitHub returned an unreadable contribution calendar.", "upstream");
   }
-  return null;
-}
-
-async function runContributionQuery(client: ConnectorClient, userId: string): Promise<SourceData> {
-  if (!client.githubContributionCalendar) {
-    throw new ToolError("GitHub contribution calendars require a Composio project key with proxy_execute access.", "upstream");
-  }
-  const response = await client.githubContributionCalendar(userId);
-  const calendar = findContributionCalendar(response);
-  if (!calendar) throw new ToolError("GitHub returned an unreadable contribution calendar.", "upstream");
-  const allDays = (calendar.weeks as unknown[]).flatMap((week) => {
-    if (!week || typeof week !== "object") return [];
-    const days = (week as Record<string, unknown>).contributionDays;
-    if (!Array.isArray(days)) return [];
-    return days.flatMap((day) => {
-      if (!day || typeof day !== "object") return [];
-      const row = day as Record<string, unknown>;
-      if (typeof row.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return [];
-      const count = typeof row.contributionCount === "number" ? Math.max(0, row.contributionCount) : 0;
-      const level = typeof row.contributionLevel === "string"
-        ? ({ NONE: 0, FIRST_QUARTILE: 1, SECOND_QUARTILE: 2, THIRD_QUARTILE: 3, FOURTH_QUARTILE: 4 } as Record<string, number>)[row.contributionLevel] ?? 0
-        : Math.min(4, Math.ceil(count / 3));
-      return [{ date: row.date, count, level }];
-    });
+  const allDays = calendar.days.flatMap((day) => {
+    if (!day || typeof day.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(day.date)) return [];
+    const count = typeof day.count === "number" ? Math.max(0, day.count) : 0;
+    return [{ date: day.date, count, level: Math.min(4, Math.max(0, day.level ?? 0)) }];
   }).sort((a, b) => a.date.localeCompare(b.date));
   const byDate = new Map(allDays.map((day) => [day.date, day]));
   const end = new Date();
@@ -168,7 +133,7 @@ async function runContributionQuery(client: ConnectorClient, userId: string): Pr
   if (allDays[cursor]?.date === today || allDays[cursor]?.date === yesterday) {
     while (cursor >= 0 && allDays[cursor].count > 0) { currentStreak += 1; cursor -= 1; }
   }
-  const total = typeof calendar.totalContributions === "number" ? calendar.totalContributions : allDays.reduce((sum, day) => sum + day.count, 0);
+  const total = typeof calendar.total === "number" ? calendar.total : allDays.reduce((sum, day) => sum + day.count, 0);
   return { count: total, items: [], contributions: { total, currentStreak, longestStreak, days } };
 }
 

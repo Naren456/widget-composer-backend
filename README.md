@@ -1,10 +1,11 @@
 # WidgetComposer API
 
 Backend for the WidgetComposer app: turns a prompt into a validated widget spec,
-stores widgets with immutable versions, connects GitHub through Composio, and serves
-cached widget data. All Composio code and keys live here; the app only calls this API.
+stores widgets with immutable versions, reads public GitHub data for the username in a
+prompt, and serves cached widget data. All provider code and keys live here; the app only
+calls this API.
 
-Express 5 · TypeScript · Prisma ORM · PostgreSQL · Zod · Claude (structured outputs) · Composio.
+Express 5 · TypeScript · Prisma ORM · PostgreSQL · Zod · LangChain (NVIDIA Nemotron, structured outputs) · public GitHub API.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the current implementation, planned gaps,
 and scale-up decisions. The pasted reference architecture is treated as a target, not
@@ -70,8 +71,11 @@ schema once with `npx prisma migrate resolve --applied 0001_initial`, and run
 `npm run db:migrate:deploy`. This records the existing schema as the initial Prisma
 migration without recreating tables or changing data.
 
-`ANTHROPIC_API_KEY` and `COMPOSIO_API_KEY` are optional: without them, generation and
-GitHub connect answer 503 with a clear message, and previews use sample data.
+`LLM_PROVIDER` picks the model backend (`nvidia` by default, or `openrouter`) with
+`NVIDIA_API_KEY` / `NVIDIA_MODEL` or `OPENROUTER_API_KEY` / `OPENROUTER_MODEL`: without a
+key, generation answers 503 with a clear message and previews use sample data. GitHub data
+needs no key: it is read from the public API for the username stored on each widget, and a
+source without a username answers 409.
 Website thumbnails and user-uploaded images do not require any extra provider.
 Web research uses the local SearXNG service; no paid search API key is needed. Start it
 with `docker compose up -d searxng` and set `SEARXNG_URL=http://127.0.0.1:8080` in the
@@ -81,7 +85,7 @@ to generation as untrusted references. Very large HTML pages are read up to an 8
 limit, then their extracted text is ranked in chunks for the prompt.
 
 Every request is logged to the console (method, path, status, time, error code), plus one
-line per generation run and any Composio failure.
+line per generation run and any upstream provider failure.
 
 ## API
 
@@ -103,10 +107,10 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
 | POST | `/v1/widgets/:id/publish` | `{ versionId }` — publish, or roll back to an older version |
 | GET | `/v1/widgets/:id/data` | Cached normalized data; `?refresh=true` forces a fetch |
 | POST/DELETE | `/v1/widgets/:id/instances[/:instanceId]` | Register / remove a home-screen placement |
-| GET | `/v1/connectors` | Connected Composio accounts (never tokens) |
-| POST | `/v1/connectors/github/connect` | → `{ authorizeUrl }`: a Composio link to open in a browser |
-| GET | `/v1/connectors/github/callback` | Composio returns here; forwards the outcome to `APP_REDIRECT_URL` |
-| DELETE | `/v1/connectors/:id` | Delete the Composio connected account |
+| GET | `/v1/connectors` | Always `[]`: public GitHub data needs no connected account |
+| POST | `/v1/connectors/github/connect` | 409 `CONNECTOR_NOT_REQUIRED`: name the username in the prompt |
+| GET | `/v1/connectors/github/callback` | Kept for old installed builds; forwards the outcome to `APP_REDIRECT_URL` |
+| DELETE | `/v1/connectors/:id` | 404: there is nothing to disconnect |
 
 ## Design notes
 
@@ -124,11 +128,12 @@ Errors are always `{ "error": { "code", "message", "details"? } }`.
 - **Web research** (`src/modules/research/agent.ts`) uses the private SearXNG service only
   when a prompt signals a need for outside/current information, then reads at most three
   public result pages. Search runs without a vendor API key.
-- **Connected accounts** live in Composio (`src/modules/connectors/composio.ts`), keyed by our
-  user id. Composio runs the GitHub OAuth flow and holds the tokens; this API stores none and
-  runs the read-only `GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS` tool with `@me` queries. GitHub
-  contribution charts use the authenticated GraphQL proxy and require `proxy_execute` on the
-  Composio project key plus `read:user` on its GitHub OAuth config.
+- **GitHub data** (`src/modules/connectors/github-api.ts`) is public and per-user: each
+  `github_data` source carries the GitHub username the user named in the prompt, and the API
+  reads `api.github.com/search/issues` and the public contribution calendar for that account.
+  There is no OAuth, no stored token, and no server-wide username. Unauthenticated search is
+  rate-limited by GitHub, so widget data is cache-first and keeps the last good snapshot when a
+  refresh fails. Specs created before v10 without a username answer 409 `CONNECTOR_REQUIRED`.
 - **Widget data** is cache-first: the last good snapshot is kept, and a failed refresh records
   `lastError` instead of replacing good data.
 - **Attached images** are compressed and bounded for Android widget transport; saved asset IDs can be rendered

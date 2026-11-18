@@ -6,8 +6,8 @@ import {
   type WebsiteDataSource,
 } from "../../spec/widget-spec.js";
 import { type ConnectionStatus, type ConnectorRuntimeContext, type DataConnectorTemplate } from "./data-connector.js";
-import { GITHUB_TOOLKIT, runQuery, sampleData, type SourceData } from "./github.js";
-import { connectorHttpError, requireClient } from "./service.js";
+import { runQuery, sampleData, type SourceData } from "./github.js";
+import { connectorHttpError } from "./connector.js";
 import { fetchNewsFeed } from "../widget-data/news.js";
 import { fetchWebsitePage } from "../widget-data/website.js";
 
@@ -17,25 +17,19 @@ const connectors: {
   news: DataConnectorTemplate<NewsDataSource>;
 } = {
   github: {
-    async connectionStatus(context) {
-      if (!context.client) return "not_configured";
-      const accounts = await context.client.accounts(context.userId, GITHUB_TOOLKIT);
-      if (accounts.some((account) => account.status === "active")) return "connected";
-      return accounts.length > 0 ? "needs_reauth" : "not_connected";
+    async connectionStatus(_context, source) {
+      return source.user ? "connected" : "not_configured";
     },
     requireConnection(status) {
       if (status === "not_configured") {
-        throw new HttpError(503, "CONNECTOR_UNAVAILABLE", "Connected accounts are not configured on the server (COMPOSIO_API_KEY).");
-      }
-      if (status === "not_connected") {
-        throw new HttpError(409, "CONNECTOR_REQUIRED", "Connect GitHub to load this widget's data.");
-      }
-      if (status === "needs_reauth") {
-        throw new HttpError(409, "CONNECTOR_NEEDS_REAUTH", "Reconnect GitHub to keep this widget updated.");
+        throw new HttpError(409, "CONNECTOR_REQUIRED", "This widget needs a GitHub username. Regenerate it naming the GitHub user to show.");
       }
     },
     fetch(source, context) {
-      return runQuery(requireClient(context.client), context.userId, source.query);
+      if (!source.user) {
+        throw new HttpError(409, "CONNECTOR_REQUIRED", "This widget needs a GitHub username. Regenerate it naming the GitHub user to show.");
+      }
+      return runQuery(context.github, source.query, source.user);
     },
     sample: (source) => sampleData(source.query),
   },
@@ -55,7 +49,7 @@ export async function connectorConnectionStatus(
   source: DataSource,
   context: ConnectorRuntimeContext,
 ): Promise<ConnectionStatus> {
-  if (source.connector === "github") return await connectors.github.connectionStatus?.(context) ?? "connected";
+  if (source.connector === "github") return await connectors.github.connectionStatus?.(context, source) ?? "connected";
   return "connected";
 }
 

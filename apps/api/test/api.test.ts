@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 
-import { ToolError } from "../src/modules/connectors/composio.js";
+import { ToolError } from "../src/modules/connectors/connector.js";
 import { toFlat } from "../src/spec/flat.js";
 import { validateSpec, type WidgetSpec } from "../src/spec/widget-spec.js";
-import { fakeConnectors, sampleSpec, scriptedLlm, startServer, type TestServer } from "./helpers.js";
+import { fakeGitHub, sampleSpec, scriptedLlm, startServer, type TestServer } from "./helpers.js";
 
 const flatOf = (spec: unknown) => {
   const checked = validateSpec(spec);
@@ -206,111 +206,122 @@ describe("generation", () => {
   });
 });
 
-describe("GitHub through Composio, and widget data", () => {
-  let searchMode: "ok" | "fail" | "revoked" = "ok";
-  const composio = fakeConnectors((_userId, tool, args) => {
-    assert.equal(tool, "GITHUB_SEARCH_ISSUES_AND_PULL_REQUESTS");
-    if (searchMode === "fail") throw new ToolError("Composio failed: GitHub returned 500", "upstream");
-    if (searchMode === "revoked") throw new ToolError("Composio failed: Bad credentials", "unauthorized");
-    assert.match(String(args.q), /author:@me/);
-    return {
-      data: {
+describe("GitHub public API, and widget data", () => {
+  let searchMode: "ok" | "fail" | "revoked" | "limited" = "ok";
+  const github = fakeGitHub({
+    search(qualifier) {
+      if (searchMode === "fail") throw new ToolError("GitHub returned HTTP 500.", "upstream");
+      if (searchMode === "revoked") throw new ToolError("GitHub denied the request.", "unauthorized");
+      if (searchMode === "limited") throw new ToolError("GitHub rate limit reached. Try again shortly.", "rate_limited");
+      assert.match(qualifier, /author:octocat/);
+      return {
         total_count: 2,
         items: [
           { title: "Add refresh", html_url: "https://github.com/a/b/pull/1", repository_url: "https://api.github.com/repos/a/b", number: 1, updated_at: "2026-10-30T00:00:00Z", user: { login: "octo" } },
           { title: "Evil link", html_url: "javascript:alert(1)", repository_url: "https://api.github.com/repos/a/b", number: 2, updated_at: "2026-10-30T00:00:00Z", user: null },
         ],
-      },
-    };
+      };
+    },
   });
 
   let s: TestServer;
   let token: string;
-  let userId: string;
   before(async () => {
-    s = await startServer({ connectors: composio });
-    ({ accessToken: token, userId } = await s.signUp());
+    s = await startServer({ github });
+    ({ accessToken: token } = await s.signUp());
   });
   after(() => s.close());
 
-  const setAccount = (status: "active" | "needs_reauth") =>
-    composio.accountsByUser.set(userId, [{ id: "ca_github1", status, createdAt: "2026-10-31T00:00:00Z" }]);
+  const specWithoutUser = () => {
+    const spec = sampleSpec();
+    return { ...spec, dataSources: [{ id: "prs", connector: "github", query: "open_pull_requests" }] };
+  };
 
-  test("without COMPOSIO_API_KEY, connect answers 503 and previews use sample data", async () => {
-    const bare = await startServer();
-    const t = (await bare.signUp()).accessToken;
-    assert.equal((await bare.request("/v1/connectors/github/connect", { token: t, method: "POST" })).status, 503);
-    assert.equal((await bare.request("/v1/widgets/preview-data", { token: t, body: { spec: sampleSpec() } })).body.sample, true);
-    await bare.close();
-  });
-
-  test("preview uses flagged sample data before GitHub is connected", async () => {
-    const res = await s.request("/v1/widgets/preview-data", { token, body: { spec: sampleSpec() } });
-    assert.equal(res.body.sample, true);
-    assert.equal(res.body.data.prs.items.length, 3);
-  });
-
-  test("widget data asks for a connection before GitHub is connected", async () => {
-    const w = (await s.request("/v1/widgets", { token, body: { spec: sampleSpec() } })).body;
-    const res = await s.request(`/v1/widgets/${w.id}/data`, { token });
-    assert.equal(res.status, 409);
-    assert.equal(res.body.error.code, "CONNECTOR_REQUIRED");
-  });
-
-  test("connect returns a Composio link whose callback forwards to the app", async () => {
-    const start = await s.request("/v1/connectors/github/connect", { token, method: "POST" });
-    assert.match(start.body.authorizeUrl, /^https:\/\/connect\.composio\.test\/github/);
-    assert.equal(composio.links.at(-1), "https://api.test/v1/connectors/github/callback");
-    const ok = await s.request("/v1/connectors/github/callback?status=success&connected_account_id=ca_1");
+  test("connectors endpoints explain that public GitHub data needs no connection", async () => {
+    assert.deepEqual((await s.request("/v1/connectors", { token })).body.connectors, []);
+    const connect = await s.request("/v1/connectors/github/connect", { token, method: "POST" });
+    assert.equal(connect.status, 409);
+    assert.equal(connect.body.error.code, "CONNECTOR_NOT_REQUIRED");
+    assert.equal((await s.request("/v1/connectors/anything", { token, method: "DELETE" })).status, 404);
+    const ok = await s.request("/v1/connectors/github/callback?status=success");
     assert.equal(ok.headers.get("location"), "web2widgets://connections?provider=github&status=connected");
     const failed = await s.request("/v1/connectors/github/callback?status=failed");
     assert.equal(failed.headers.get("location"), "web2widgets://connections?provider=github&status=error");
   });
 
-  test("data is fetched, normalised, cached, and kept when a refresh fails", async () => {
-    setAccount("active");
-    const list = await s.request("/v1/connectors", { token });
-    assert.deepEqual(list.body.connectors.map((c: { id: string; status: string }) => [c.id, c.status]), [["ca_github1", "active"]]);
-    assert.equal((await s.request("/v1/connectors/github/connect", { token, method: "POST" })).status, 409);
+  test("preview uses flagged sample data when a GitHub source has no username", async () => {
+    const res = await s.request("/v1/widgets/preview-data", { token, body: { spec: specWithoutUser() } });
+    assert.equal(res.body.sample, true);
+    assert.equal(res.body.data.prs.items.length, 3);
+  });
 
+  test("widget data asks for a username when the source has none", async () => {
+    const w = (await s.request("/v1/widgets", { token, body: { spec: specWithoutUser() } })).body;
+    const res = await s.request(`/v1/widgets/${w.id}/data`, { token });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, "CONNECTOR_REQUIRED");
+    assert.match(res.body.error.message, /GitHub username/);
+  });
+
+  test("data is fetched for the spec's username, normalised, cached, and kept when a refresh fails", async () => {
     const w = (await s.request("/v1/widgets", { token, body: { spec: sampleSpec() } })).body;
-    composio.calls.length = 0;
+    github.searchCalls.length = 0;
     const first = await s.request(`/v1/widgets/${w.id}/data`, { token });
     assert.equal(first.status, 200);
     assert.equal(first.body.data.prs.count, 2);
     assert.equal(first.body.data.prs.items[0].repo, "a/b");
     assert.equal(first.body.data.prs.items[1].url, "https://github.com/", "non-GitHub links are never passed through");
     assert.equal(first.body.stale, false);
+    assert.match(github.searchCalls[0], /author:octocat/);
 
     await s.request(`/v1/widgets/${w.id}/data`, { token });
-    assert.equal(composio.calls.length, 1, "second read is served from the snapshot");
+    assert.equal(github.searchCalls.length, 1, "second read is served from the snapshot");
 
     searchMode = "fail";
     const failed = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });
     assert.equal(failed.status, 200);
     assert.equal(failed.body.data.prs.count, 2, "last good data is kept");
-    assert.match(failed.body.lastError, /Composio could not complete the connected-account request/);
+    assert.match(failed.body.lastError, /GitHub could not complete the request/);
 
     searchMode = "revoked";
     const revoked = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });
     assert.equal(revoked.body.data.prs.count, 2);
-    assert.match(revoked.body.lastError, /revoked/);
-    searchMode = "ok";
+    assert.match(revoked.body.lastError, /denied/);
 
-    setAccount("needs_reauth");
-    const stale = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });
-    assert.match(stale.body.lastError, /Reconnect GitHub/);
-    // Reconnecting replaces the broken account.
-    assert.equal((await s.request("/v1/connectors/github/connect", { token, method: "POST" })).status, 200);
-    assert.deepEqual(composio.accountsByUser.get(userId), []);
+    searchMode = "limited";
+    const limited = await s.request(`/v1/widgets/${w.id}/data?refresh=true`, { token });
+    assert.match(limited.body.lastError, /rate limit/);
+    searchMode = "ok";
   });
 
-  test("disconnect removes only the user's own account", async () => {
-    setAccount("active");
-    const other = (await s.signUp()).accessToken;
-    assert.equal((await s.request("/v1/connectors/ca_github1", { method: "DELETE", token: other })).status, 404);
-    assert.equal((await s.request("/v1/connectors/ca_github1", { method: "DELETE", token })).status, 204);
-    assert.deepEqual((await s.request("/v1/connectors", { token })).body.connectors, []);
+  test("streak charts read the named user's public contribution calendar", async () => {
+    const days = Array.from({ length: 28 }, (_, i) => {
+      const date = new Date(Date.UTC(2026, 9, 22 + i));
+      return { date: date.toISOString().slice(0, 10), count: i % 3 === 0 ? 2 : 0, level: i % 3 === 0 ? 2 : 0 };
+    });
+    const calendar = fakeGitHub({ calendar: (username) => {
+      assert.equal(username, "Naren456");
+      return { total: days.reduce((sum, d) => sum + d.count, 0), days };
+    } });
+    const streak = await startServer({ github: calendar });
+    const t = (await streak.signUp()).accessToken;
+    const spec = {
+      schemaVersion: 10,
+      name: "Streak",
+      presentation: {
+        theme: "dark",
+        refreshMinutes: 30,
+        palette: { background: "#111111", surface: "#1A1A1A", text: "#FFFFFF", muted: "#AAAAAA", accent: "#FFAA00", border: "#333333" },
+      },
+      dataSources: [{ id: "gh", connector: "github", query: "contribution_streak", user: "Naren456" }],
+      root: { type: "column", children: [{ type: "streak_chart", source: "gh" }] },
+    };
+    const w = (await streak.request("/v1/widgets", { token: t, body: { spec } })).body;
+    const data = await streak.request(`/v1/widgets/${w.id}/data`, { token: t });
+    assert.equal(data.status, 200);
+    assert.deepEqual(calendar.calendarCalls, ["Naren456"]);
+    assert.equal(data.body.data.gh.contributions.days.length, 28);
+    await streak.close();
   });
 });
 

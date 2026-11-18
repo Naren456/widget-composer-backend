@@ -39,6 +39,10 @@
         {
           "type": "number",
           "const": 9
+        },
+        {
+          "type": "number",
+          "const": 10
         }
       ]
     },
@@ -64,6 +68,15 @@
             "sans",
             "serif",
             "monospace"
+          ]
+        },
+        "themeVariant": {
+          "type": "string",
+          "enum": [
+            "mui-light",
+            "mui-dark",
+            "light",
+            "dark"
           ]
         },
         "palette": {
@@ -155,6 +168,10 @@
                   "review_requests",
                   "contribution_streak"
                 ]
+              },
+              "user": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
               }
             },
             "required": [
@@ -693,6 +710,103 @@
             "type",
             "label",
             "action"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "toggle"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "isOn": {
+              "type": "boolean"
+            },
+            "valueBinding": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "isOn",
+            "valueBinding"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "slider"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "minValue": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maxValue": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 1000000
+            },
+            "step": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "valueBinding": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "minValue",
+            "maxValue",
+            "valueBinding"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "chip"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40
+            },
+            "isSelected": {
+              "type": "boolean"
+            },
+            "valueBinding": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "required": [
+            "type",
+            "label",
+            "isSelected",
+            "valueBinding"
           ],
           "additionalProperties": false
         }

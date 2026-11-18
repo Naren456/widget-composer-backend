@@ -1,23 +1,24 @@
 import { Router } from "express";
 
 import { type Deps } from "../deps.js";
-import { currentUser } from "../modules/auth/auth.js";
-import { connectGitHub, disconnect, listConnectors, requireClient } from "../modules/connectors/service.js";
+import { HttpError } from "../lib/errors.js";
 
-export function connectorRoutes(deps: Deps): Router {
+/**
+ * GitHub data is read from the public API for the username stored on each widget,
+ * so there is no account to connect. These routes keep the response shape the app
+ * already calls.
+ */
+export function connectorRoutes(_deps: Deps): Router {
   const router = Router();
 
-  router.get("/connectors", async (_req, res) => {
-    res.json({ connectors: await listConnectors(deps.connectors, currentUser(res)) });
+  router.get("/connectors", (_req, res) => {
+    res.json({ connectors: [] });
   });
-  router.post("/connectors/github/connect", async (_req, res) => {
-    res.json({
-      authorizeUrl: await connectGitHub(requireClient(deps.connectors), deps.config, currentUser(res)),
-    });
+  router.post("/connectors/github/connect", async () => {
+    throw new HttpError(409, "CONNECTOR_NOT_REQUIRED", "GitHub data comes from the public API; name the GitHub username in your prompt.");
   });
-  router.delete("/connectors/:id", async (req, res) => {
-    await disconnect(requireClient(deps.connectors), currentUser(res), req.params.id);
-    res.status(204).end();
+  router.delete("/connectors/:id", async () => {
+    throw new HttpError(404, "NOT_FOUND", "Connector not found.");
   });
 
   return router;

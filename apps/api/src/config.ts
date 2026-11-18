@@ -4,7 +4,7 @@ import { z } from "zod";
  * Environment configuration, validated once at startup so a missing or malformed
  * secret fails the boot instead of the first request that needs it.
  *
- * Optional integrations (Claude, Composio) may be left unset: their routes then answer
+ * Optional integrations (the LLM provider) may be left unset: its routes then answer
  * 503 with a clear message rather than the server refusing to start.
  */
 
@@ -39,22 +39,17 @@ const schema = z.object({
   /** Signs access tokens. */
   SESSION_SECRET: key32,
 
-  ANTHROPIC_API_KEY: z.string().optional(),
-  ANTHROPIC_MODEL: z.string().default("claude-opus-5-5"),
+  /** NVIDIA API (OpenAI-compatible) used through LangChain for widget generation. */
+  NVIDIA_API_KEY: z.string().optional(),
+  NVIDIA_MODEL: z.string().default("nvidia/nemotron-3-ultra-550b-a55b"),
   /** Provider used for widget generation. */
-  LLM_PROVIDER: z.enum(["anthropic", "openrouter", "google"]).optional(),
+  LLM_PROVIDER: z.enum(["nvidia", "openrouter"]).optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("openrouter/free"),
-  GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default("gemini-3.5-flash-lite"),
 
   /** Self-hosted SearXNG base URL; requires no vendor search API key. */
   SEARXNG_URL: z.url().default("http://127.0.0.1:8080"),
 
-  /** Composio holds connected accounts (GitHub) and their tokens. */
-  COMPOSIO_API_KEY: z.string().optional(),
-  /** GitHub auth config to connect with; unset uses the project's existing one or a Composio-managed one. */
-  COMPOSIO_GITHUB_AUTH_CONFIG_ID: z.string().optional(),
   /** Where the connect callback sends the user afterwards — the app's deep link. */
   APP_REDIRECT_URL: z.string().default("web2widgets://connections"),
 
@@ -73,13 +68,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return parsed.data;
 }
 
-export const composioConfigured = (c: Config) => Boolean(c.COMPOSIO_API_KEY);
-export const selectedLlmProvider = (c: Config) => c.LLM_PROVIDER ?? (c.OPENROUTER_API_KEY ? "openrouter" : c.GEMINI_API_KEY ? "google" : "anthropic");
-
-export const llmConfigured = (c: Config) => {
-  switch (selectedLlmProvider(c)) {
-    case "openrouter": return Boolean(c.OPENROUTER_API_KEY);
-    case "google": return Boolean(c.GEMINI_API_KEY);
-    case "anthropic": return Boolean(c.ANTHROPIC_API_KEY);
-  }
+export type LlmSettings = {
+  provider: string;
+  apiKey: string;
+  model: string;
+  baseURL?: string;
+  headers?: Record<string, string>;
 };
+
+/** Resolve the selected provider into LangChain options; null when its key is unset. */
+export function llmSettings(c: Config): LlmSettings | null {
+  const provider = c.LLM_PROVIDER ?? (c.OPENROUTER_API_KEY ? "openrouter" : "nvidia");
+  if (provider === "openrouter") {
+    return c.OPENROUTER_API_KEY
+      ? {
+          provider,
+          apiKey: c.OPENROUTER_API_KEY,
+          model: c.OPENROUTER_MODEL,
+          baseURL: "https://openrouter.ai/api/v1",
+          headers: { "HTTP-Referer": c.PUBLIC_API_URL, "X-Title": "WidgetComposer" },
+        }
+      : null;
+  }
+  return c.NVIDIA_API_KEY
+    ? { provider, apiKey: c.NVIDIA_API_KEY, model: c.NVIDIA_MODEL, baseURL: "https://integrate.api.nvidia.com/v1" }
+    : null;
+}
+
+export const llmConfigured = (c: Config) => llmSettings(c) !== null;

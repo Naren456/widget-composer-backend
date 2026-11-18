@@ -35,6 +35,9 @@ type FlatNode = { id: string } & (
   | { type: "divider" }
   | { type: "spacer"; sizeDp: number }
   | { type: "button"; label: string; action: AllowedAction }
+  | { type: "toggle"; label: string; isOn: boolean; valueBinding: string }
+  | { type: "slider"; label: string; minValue: number; maxValue: number; step?: number; valueBinding: string }
+  | { type: "chip"; label: string; isSelected: boolean; valueBinding: string }
 );
 
 export type FlatSpec = {
@@ -44,6 +47,7 @@ export type FlatSpec = {
   theme: WidgetSpec["presentation"]["theme"];
   fontFamily: NonNullable<WidgetSpec["presentation"]["fontFamily"]>;
   palette: WidgetPalette;
+  themeVariant?: WidgetSpec["presentation"]["themeVariant"];
   refreshMinutes: number;
   dataSources: WidgetSpec["dataSources"];
   rootId: string;
@@ -69,6 +73,10 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
   name: { type: "string", description: "Short widget name, at most 40 characters" },
   theme: { enum: [...WIDGET_THEMES] },
   fontFamily: { enum: [...WIDGET_FONT_FAMILIES], description: "System font family; use sans for most compact widgets, serif for editorial styles, monospace for clocks or numeric dashboards" },
+  themeVariant: {
+    enum: ["mui-light", "mui-dark", "light", "dark"],
+    description: "Optional. mui-light/mui-dark apply Material UI surface and accent roles; light/dark keep the palette colors. Defaults to the theme.",
+  },
   palette: obj(["background", "surface", "text", "muted", "accent", "border"], {
     background: { type: "string", description: "Hex color, e.g. #17202A" }, surface: { type: "string" },
     text: { type: "string" }, muted: { type: "string" }, accent: { type: "string" }, border: { type: "string" },
@@ -79,10 +87,11 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
     description: "At most 3. Each must be used by at least one node.",
     items: {
       anyOf: [
-        obj(["id", "connector", "query"], {
+        obj(["id", "connector", "query", "user"], {
           id: { type: "string", description: "Lowercase id used in bindings, e.g. prs" },
           connector: { const: "github" },
           query: { enum: [...GITHUB_QUERIES] },
+          user: { type: "string", description: "The GitHub username the user named, copied exactly (e.g. octocat)" },
         }),
         obj(["id", "connector", "query", "url"], {
           id: { type: "string", description: "Lowercase id used in bindings, e.g. page" },
@@ -198,6 +207,29 @@ export const flatSpecJsonSchema = obj(["unsupported", "name", "theme", "fontFami
             ],
           },
         }),
+        obj(["id", "type", "label", "isOn", "valueBinding"], {
+          id: nodeId,
+          type: { const: "toggle" },
+          label: str,
+          isOn: { type: "boolean" },
+          valueBinding: { type: "string", description: "<source>.count or <source>.items[i].<field>" },
+        }),
+        obj(["id", "type", "label", "minValue", "maxValue", "step", "valueBinding"], {
+          id: nodeId,
+          type: { const: "slider" },
+          label: str,
+          minValue: { type: "integer", description: "Minimum value" },
+          maxValue: { type: "integer", description: "Maximum value" },
+          step: { type: ["integer", "null"] },
+          valueBinding: { type: "string", description: "<source>.count or <source>.items[i].<field>" },
+        }),
+        obj(["id", "type", "label", "isSelected", "valueBinding"], {
+          id: nodeId,
+          type: { const: "chip" },
+          label: str,
+          isSelected: { type: "boolean" },
+          valueBinding: { type: "string", description: "<source>.count or <source>.items[i].<field>" },
+        }),
       ],
     },
   },
@@ -252,7 +284,7 @@ export function toTree(flat: FlatSpec): { ok: true; spec: WidgetSpec } | { ok: f
     spec: {
       schemaVersion: SCHEMA_VERSION,
       name: flat.name,
-      presentation: { theme: flat.theme, fontFamily: flat.fontFamily, palette: flat.palette, refreshMinutes: flat.refreshMinutes },
+      presentation: { theme: flat.theme, fontFamily: flat.fontFamily, palette: flat.palette, refreshMinutes: flat.refreshMinutes, themeVariant: flat.themeVariant },
       dataSources: flat.dataSources,
       root,
     },
@@ -269,6 +301,8 @@ export function toFlat(spec: WidgetSpec): FlatSpec {
       const flat = { id, ...node, children: [] as string[] };
       nodes.push(flat);
       flat.children = node.children.map(walk);
+    } else if (node.type === "toggle" || node.type === "slider" || node.type === "chip") {
+      nodes.push({ id, ...node } as FlatNode);
     } else {
       nodes.push({ id, ...node } as FlatNode);
     }
@@ -281,6 +315,7 @@ export function toFlat(spec: WidgetSpec): FlatSpec {
     theme: spec.presentation.theme,
     fontFamily: spec.presentation.fontFamily ?? "sans",
     palette: spec.presentation.palette ?? DEFAULT_WIDGET_PALETTES[spec.presentation.theme === "light" ? "light" : "dark"],
+    themeVariant: spec.presentation.themeVariant,
     refreshMinutes: spec.presentation.refreshMinutes,
     dataSources: spec.dataSources,
     rootId,

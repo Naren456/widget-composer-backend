@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { toFlat, toTree, type FlatSpec } from "../src/spec/flat.js";
-import { validateSpec } from "../src/spec/widget-spec.js";
+import { SCHEMA_VERSION, validateSpec } from "../src/spec/widget-spec.js";
 import { sampleSpec } from "./helpers.js";
 
 const issuesOf = (spec: unknown) => {
@@ -70,7 +70,7 @@ test("depth, node count and unused sources are limited", () => {
   };
   assert.ok(issuesOf(wide).some((m) => m.includes("exceeds the limit")));
 
-  const unused = { ...sampleSpec(), dataSources: [...sampleSpec().dataSources, { id: "extra", connector: "github", query: "assigned_issues" }] };
+  const unused = { ...sampleSpec(), dataSources: [...sampleSpec().dataSources, { id: "extra", connector: "github", query: "assigned_issues", user: "octocat" }] };
   assert.ok(issuesOf(unused).some((m) => m.includes('"extra" is never used')));
 });
 
@@ -79,7 +79,7 @@ test("flat output converts to a tree and back", () => {
   assert.ok(spec.ok);
   const tree = toTree(toFlat(spec.spec));
   assert.ok(tree.ok);
-  assert.equal(tree.spec.schemaVersion, 9);
+  assert.equal(tree.spec.schemaVersion, SCHEMA_VERSION);
   assert.equal(tree.spec.name, spec.spec.name);
   assert.deepEqual(tree.spec.dataSources, spec.spec.dataSources);
   assert.deepEqual(tree.spec.root, spec.spec.root);

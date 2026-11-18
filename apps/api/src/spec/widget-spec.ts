@@ -13,8 +13,8 @@ export { CONNECTORS, DEVICE_METRICS, GITHUB_QUERIES, NEWS_QUERIES, WEBSITE_QUERI
  * Change the shape only by adding a new schemaVersion; stored versions are immutable.
  */
 
-export const SCHEMA_VERSION = 9;
-export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
+export const SCHEMA_VERSION = 10;
+export const SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 export const LIMITS = {
   maxDepth: 6,
@@ -36,6 +36,8 @@ export type GitHubDataSource = {
   id: string;
   connector: "github";
   query: (typeof GITHUB_QUERIES)[number];
+  /** The GitHub account named by the user in the prompt; required from schema v10. */
+  user?: string;
 };
 export type WebsiteDataSource = { id: string; connector: "website"; query: "page"; url: string };
 export type NewsDataSource = { id: string; connector: "news"; query: (typeof NEWS_QUERIES)[number]; url: string };
@@ -68,7 +70,13 @@ export type WidgetNode =
   | { type: "streak_chart"; source: string }
   | { type: "divider" }
   | { type: "spacer"; sizeDp: number }
-  | { type: "button"; label: string; action: AllowedAction };
+  | { type: "button"; label: string; action: AllowedAction }
+  /** A binary toggle switch. */
+  | { type: "toggle"; label: string; isOn: boolean; valueBinding: string }
+  /** A range slider control. */
+  | { type: "slider"; label: string; minValue: number; maxValue: number; step?: number; valueBinding: string }
+  /** A selection chip. */
+  | { type: "chip"; label: string; isSelected: boolean; valueBinding: string };
 
 export type WidgetSpec = {
   schemaVersion: (typeof SUPPORTED_SCHEMA_VERSIONS)[number];
@@ -77,6 +85,8 @@ export type WidgetSpec = {
     theme: "light" | "dark" | "system";
     /** Android system font family; Glance widgets cannot load custom app fonts. */
     fontFamily?: "sans" | "serif" | "monospace";
+    /** Material Design theme variant mapping (optional). */
+    themeVariant?: "mui-light" | "mui-dark" | "light" | "dark";
     palette?: WidgetPalette;
     /** A preference: Android decides when background refresh actually runs. */
     refreshMinutes: number;
@@ -135,20 +145,29 @@ export const nodeSchema: z.ZodType<WidgetNode> = z.lazy(() =>
     z.object({ type: z.literal("divider") }).strict(),
     z.object({ type: z.literal("spacer"), sizeDp: z.number().int().min(1).max(64) }).strict(),
     z.object({ type: z.literal("button"), label: z.string().min(1).max(LIMITS.maxLabelLength), action: widgetActionSchema }).strict(),
+    z.object({ type: z.literal("toggle"), label: z.string().min(1).max(LIMITS.maxLabelLength), isOn: z.boolean(), valueBinding: z.string().max(80) }).strict(),
+    z.object({ type: z.literal("slider"), label: z.string().min(1).max(LIMITS.maxLabelLength), minValue: z.number().int().min(0), maxValue: z.number().int().max(1000000), step: z.number().int().optional(), valueBinding: z.string().max(80) }).strict(),
+    z.object({ type: z.literal("chip"), label: z.string().min(1).max(LIMITS.maxLabelLength), isSelected: z.boolean(), valueBinding: z.string().max(80) }).strict(),
   ]),
 );
+
+/** GitHub login rules: 1-39 alphanumerics or hyphens, no leading or trailing hyphen. */
+const githubUsername = z
+  .string()
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/, "must be a GitHub username");
 
 export const specSchema: z.ZodType<WidgetSpec> = z
   .object({
     schemaVersion: z.union([
-      z.literal(1), z.literal(2), z.literal(3), z.literal(4),
-      z.literal(5), z.literal(6), z.literal(7), z.literal(8), z.literal(SCHEMA_VERSION),
+      z.literal(1), z.literal(2), z.literal(3), z.literal(4), z.literal(5),
+      z.literal(6), z.literal(7), z.literal(8), z.literal(9), z.literal(SCHEMA_VERSION),
     ]),
     name: z.string().trim().min(1).max(LIMITS.maxNameLength),
     presentation: z
       .object({
         theme: z.enum(WIDGET_THEMES),
         fontFamily: z.enum(WIDGET_FONT_FAMILIES).optional(),
+        themeVariant: z.enum(["mui-light", "mui-dark", "light", "dark"]).optional(),
         palette: widgetPaletteSchema.optional(),
         refreshMinutes: z.number().int().min(15).max(1440),
         backgroundImageAssetId: z.uuid().optional(),
@@ -157,7 +176,7 @@ export const specSchema: z.ZodType<WidgetSpec> = z
       })
       .strict(),
     dataSources: z.array(z.discriminatedUnion("connector", [
-      z.object({ id: sourceId, connector: z.literal("github"), query: z.enum(GITHUB_QUERIES) }).strict(),
+      z.object({ id: sourceId, connector: z.literal("github"), query: z.enum(GITHUB_QUERIES), user: githubUsername.optional() }).strict(),
       z.object({ id: sourceId, connector: z.literal("website"), query: z.literal("page"), url: z.string().url().max(2048) }).strict(),
       z.object({ id: sourceId, connector: z.literal("news"), query: z.enum(NEWS_QUERIES), url: z.string().url().max(2048) }).strict(),
     ])).max(LIMITS.maxDataSources),
@@ -165,6 +184,13 @@ export const specSchema: z.ZodType<WidgetSpec> = z
   })
   .strict()
   .superRefine((spec, ctx) => {
+    if (spec.schemaVersion >= 10) {
+      for (const source of spec.dataSources) {
+        if (source.connector === "github" && !source.user) {
+          ctx.addIssue({ code: "custom", path: ["dataSources"], message: "GitHub data sources need the GitHub username named in the prompt" });
+        }
+      }
+    }
     if (spec.schemaVersion < 4 && spec.presentation.fontFamily !== undefined) {
       ctx.addIssue({ code: "custom", path: ["presentation", "fontFamily"], message: "fontFamily requires WidgetSpec v4" });
     }

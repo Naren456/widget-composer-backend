@@ -17,6 +17,9 @@ export const COMPONENT_CATALOG = [
   { type: "divider", description: "Thin horizontal separator.", properties: [] },
   { type: "spacer", description: "Fixed gap in dp from 1-64.", properties: ["sizeDp"] },
   { type: "button", description: "Compact action button; actions are restricted to open_url, open_app, refresh or lock_screen. lock_screen is available only in WidgetSpec v8 when explicitly requested and asks the user to enable Android device-admin access before locking the screen.", properties: ["label", "action"] },
+  { type: "toggle", description: "Binary on/off switch with a label and optional data binding.", properties: ["label", "isOn", "valueBinding"] },
+  { type: "slider", description: "Range slider control with a label; value binds to a numeric binding between minValue and maxValue.", properties: ["label", "minValue", "maxValue", "step", "valueBinding"] },
+  { type: "chip", description: "Selection chip with a label and optional selection state binding.", properties: ["label", "isSelected", "valueBinding"] },
 ] as const;
 
 export const WIDGET_SIZES = ["small", "medium", "large"] as const;

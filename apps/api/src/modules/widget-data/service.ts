@@ -13,7 +13,7 @@ import {
   requireConnectorConnection,
   sampleConnectorData,
 } from "../connectors/data-connectors.js";
-import { type ConnectorClient, ToolError } from "../connectors/composio.js";
+import { type GitHubApi, ToolError } from "../connectors/connector.js";
 import { type SourceData } from "../connectors/github.js";
 import { loadSpecImages } from "./assets.js";
 
@@ -36,7 +36,7 @@ export type WidgetData = {
   versionId: string;
 };
 
-type Deps = { db: PrismaClient; connectors: ConnectorClient | null };
+type Deps = { db: PrismaClient; github: GitHubApi };
 
 function imageSources(node: WidgetNode, found = new Map<string, Set<number>>()): Map<string, Set<number>> {
   if (node.type === "image") {
@@ -56,7 +56,7 @@ async function fetchAll(deps: Deps, userId: string, spec: WidgetSpec): Promise<R
   const imageIndexesBySource = imageSources(spec.root);
   const context = (sourceId: string) => ({
     userId,
-    client: deps.connectors,
+    github: deps.github,
     imageIndexes: [...(imageIndexesBySource.get(sourceId) ?? [])],
   });
   for (const source of spec.dataSources) {
@@ -97,7 +97,7 @@ export async function previewData(
   const imageIndexesBySource = imageSources(spec.root);
   const context = (sourceId: string) => ({
     userId,
-    client: deps.connectors,
+    github: deps.github,
     imageIndexes: [...(imageIndexesBySource.get(sourceId) ?? [])],
   });
   const statuses = new Map<string, Awaited<ReturnType<typeof connectorConnectionStatus>>>();
@@ -105,14 +105,9 @@ export async function previewData(
     try {
       statuses.set(source.id, await connectorConnectionStatus(source, context(source.id)));
     } catch (error) {
-      if (error instanceof ToolError && error.kind === "misconfigured" && source.connector === "github") {
-        console.warn("[widget-data] Composio API key was rejected; previewing sample GitHub data.");
-        statuses.set(source.id, "not_configured");
-      } else {
-        const mapped = connectorError(error);
-        if (mapped) throw mapped;
-        throw error;
-      }
+      const mapped = connectorError(error);
+      if (mapped) throw mapped;
+      throw error;
     }
   }
   let usedSample = false;

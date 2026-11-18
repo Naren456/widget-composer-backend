@@ -1,6 +1,6 @@
 /**
  * Provider-neutral interface for structured generation. The generation service only
- * sees conversations that return JSON text; the Anthropic adapter (and the scripted
+ * sees conversations that return JSON text; the LangChain adapter (and the scripted
  * fake used in tests) live behind it.
  */
 

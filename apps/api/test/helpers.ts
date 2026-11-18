@@ -10,7 +10,7 @@ import { PrismaClient } from "@prisma/client";
 
 import { buildApp } from "../src/app.js";
 import { type Config, loadConfig } from "../src/config.js";
-import { type ConnectedAccount, type ConnectorClient } from "../src/modules/connectors/composio.js";
+import { type GitHubApi } from "../src/modules/connectors/connector.js";
 import { type LlmProvider, type LlmReply } from "../src/modules/generation/llm.js";
 
 process.env.NODE_ENV = "test";
@@ -92,33 +92,31 @@ export function scriptedLlm(replies: (LlmReply | string)[]): LlmProvider & { sen
   };
 }
 
-/** In-memory Composio: accounts per user, and tool calls answered by `handler`. */
-export function fakeConnectors(
-  handler: (userId: string, tool: string, args: Record<string, unknown>) => Record<string, unknown> | Promise<Record<string, unknown>>,
-): ConnectorClient & { accountsByUser: Map<string, ConnectedAccount[]>; links: string[]; calls: { tool: string; args: Record<string, unknown> }[] } {
-  const accountsByUser = new Map<string, ConnectedAccount[]>();
-  const links: string[] = [];
-  const calls: { tool: string; args: Record<string, unknown> }[] = [];
+/** In-memory public GitHub API: search and contribution answers come from `opts`. */
+export function fakeGitHub(opts: {
+  search?: (qualifier: string) => unknown;
+  calendar?: (username: string) => unknown;
+} = {}): GitHubApi & { searchCalls: string[]; calendarCalls: string[] } {
+  const searchCalls: string[] = [];
+  const calendarCalls: string[] = [];
   return {
-    accountsByUser,
-    links,
-    calls,
-    async connectLink(userId, toolkit, callbackUrl) {
-      links.push(callbackUrl);
-      return `https://connect.composio.test/${toolkit}?user=${userId}`;
+    searchCalls,
+    calendarCalls,
+    async searchIssues(qualifier) {
+      searchCalls.push(qualifier);
+      return opts.search ? await opts.search(qualifier) : { total_count: 0, items: [] };
     },
-    async accounts(userId) {
-      return accountsByUser.get(userId) ?? [];
-    },
-    async disconnect(accountId) {
-      for (const [user, list] of accountsByUser) accountsByUser.set(user, list.filter((a) => a.id !== accountId));
-    },
-    async execute(userId, tool, args) {
-      calls.push({ tool, args });
-      return handler(userId, tool, args);
+    async contributionCalendar(username) {
+      calendarCalls.push(username);
+      return opts.calendar ? await opts.calendar(username) : { total: 0, days: [] };
     },
   };
 }
+
+const emptyGitHub: GitHubApi = {
+  searchIssues: async () => ({ total_count: 0, items: [] }),
+  contributionCalendar: async () => ({ total: 0, days: [] }),
+};
 
 export type TestServer = {
   url: string;
@@ -135,7 +133,7 @@ export type TestServer = {
 
 export async function startServer(opts: {
   llm?: LlmProvider | null;
-  connectors?: ConnectorClient | null;
+  github?: GitHubApi;
   config?: Config;
 } = {}): Promise<TestServer> {
   const db = await testDb();
@@ -144,7 +142,7 @@ export async function startServer(opts: {
     db,
     config,
     llm: opts.llm ?? null,
-    connectors: opts.connectors ?? null,
+    github: opts.github ?? emptyGitHub,
   });
   const server = app.listen(0);
   await new Promise((r) => server.once("listening", r));
@@ -185,7 +183,7 @@ export function sampleSpec(name = "My PRs") {
     schemaVersion: 1,
     name,
     presentation: { theme: "dark", refreshMinutes: 30 },
-    dataSources: [{ id: "prs", connector: "github", query: "open_pull_requests" }],
+    dataSources: [{ id: "prs", connector: "github", query: "open_pull_requests", user: "octocat" }],
     root: {
       type: "column",
       gap: 8,
