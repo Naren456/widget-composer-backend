@@ -21,7 +21,9 @@
     "@composio/core": "^0.17.0",
     "@prisma/client": "^6.19.3",
     "express": "^5.3.0",
+    "express-openapi-validator": "^5.6.2",
     "sharp": "^0.35.5",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

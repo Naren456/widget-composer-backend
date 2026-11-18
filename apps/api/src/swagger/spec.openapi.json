@@ -1,0 +1,94 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "WidgetComposer API",
+    "description": "API for WidgetComposer - AI-powered widget generation platform",
+    "version": "1.0.0",
+    "url": "https://widget-composer-backend.vercel.app"
+  },
+  "servers": [
+    {
+      "url": "https://widget-composer-backend.vercel.app",
+      "description": "Production server"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Development server"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "description": "Check if the API is running",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["ok"]
+                    },
+                    "service": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Widget": {
+        "type": "object",
+        "required": ["id", "userId", "name", "status", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "userId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+          "currentVersionId": { "type": "string", "format": "uuid", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "user": { "$ref": "#/components/schemas/User" },
+          "versions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/WidgetVersion" }
+          },
+          "currentVersion": { "$ref": "#/components/schemas/WidgetVersion" }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WidgetVersion": {
+        "type": "object",
+        "required": ["id", "widgetId", "versionNumber", "specJson"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "widgetId": { "type": "string", "format": "uuid" },
+          "versionNumber": { "type": "integer" },
+          "schemaVersion": { "type": "integer" },
+          "specJson": { "type": "object" },
+          "source": { "type": "string" },
+          "generationRunId": { "type": "string", "format": "uuid", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}
